@@ -8,28 +8,55 @@
 
 namespace dlm_test {
 
-// Тестовый двойник IHttpClient с поддержкой Range, без обращения к сети.
+// Тестовый двойник IHttpClient с поддержкой Range и If-Range, без обращения
+// к сети.
 // - acceptRanges = true: на запрос с заголовком Range отвечает 206 и куском
 //   тела, выставляя Content-Range (через contentRangeTotal), как реальный
-//   сервер, поддерживающий докачку.
+//   сервер, поддерживающий докачку. Всегда также возвращает etag_ в
+//   HttpResponse::etag (как реальный CurlHttpClient парсит заголовок ETag).
 // - acceptRanges = false: игнорирует Range и всегда отдаёт 200 + тело
 //   целиком — так ведёт себя сервер без поддержки Range.
 // - writeChunkSize: если > 0, тело чанка отдаётся onData несколькими
 //   вызовами по writeChunkSize байт вместо одного — так же, как это
 //   иногда делает libcurl, чтобы проверить, что запись по смещению внутри
-//   чанка накапливается правильно (см. Downloader::downloadChunked).
+//   чанка накапливается правильно.
+// - failIfRangeMismatch: если true и в запросе есть заголовок If-Range,
+//   отличающийся от etag_, сервер "меняет мнение" и отдаёт 200 с телом
+//   целиком — так реальный сервер сигналит "файл изменился, докачка
+//   невозможна".
+// - rangeRequestCount считает, сколько раз приходил запрос с Range —
+//   тестам это нужно, чтобы убедиться, что уже готовые чанки не
+//   перекачиваются заново.
 class FakeHttpClient final : public dlm::IHttpClient {
 public:
-    explicit FakeHttpClient(std::string body, bool acceptRanges = true, std::size_t writeChunkSize = 0)
-        : body_(std::move(body)), acceptRanges_(acceptRanges), writeChunkSize_(writeChunkSize) {}
+    explicit FakeHttpClient(std::string body, bool acceptRanges = true,
+                             std::size_t writeChunkSize = 0, std::string etag = "",
+                             bool failIfRangeMismatch = false)
+        : body_(std::move(body)), acceptRanges_(acceptRanges),
+          writeChunkSize_(writeChunkSize), etag_(std::move(etag)),
+          failIfRangeMismatch_(failIfRangeMismatch) {}
 
     dlm::HttpResponse perform(const dlm::HttpRequest& request, const dlm::WriteCallback& onData) override {
         dlm::HttpResponse response;
         response.effectiveUrl = request.url;
         response.acceptRanges = acceptRanges_;
+        response.etag = etag_;
 
         const auto rangeIt = request.headers.find("Range");
         if (rangeIt == request.headers.end() || !acceptRanges_) {
+            response.statusCode = 200;
+            response.contentLength = static_cast<std::int64_t>(body_.size());
+            if (!deliver(body_.data(), body_.size(), onData)) {
+                response.statusCode = 0;
+            }
+            return response;
+        }
+
+        ++rangeRequestCount;
+
+        const auto ifRangeIt = request.headers.find("If-Range");
+        if (failIfRangeMismatch_ && ifRangeIt != request.headers.end() && ifRangeIt->second != etag_) {
+            // Сервер игнорирует If-Range, если он не совпал, и отдаёт файл целиком.
             response.statusCode = 200;
             response.contentLength = static_cast<std::int64_t>(body_.size());
             if (!deliver(body_.data(), body_.size(), onData)) {
@@ -59,6 +86,8 @@ public:
         }
         return response;
     }
+
+    int rangeRequestCount = 0;
 
 private:
     bool deliver(const char* data, std::size_t size, const dlm::WriteCallback& onData) const {
@@ -95,6 +124,8 @@ private:
     std::string body_;
     bool acceptRanges_;
     std::size_t writeChunkSize_;
+    std::string etag_;
+    bool failIfRangeMismatch_;
 };
 
 } // namespace dlm_test
