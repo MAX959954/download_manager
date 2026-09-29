@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 #include "dlm/IHttpClient.hpp"
+#include "dlm/MetaFile.hpp"
 #include "dlm/Types.hpp"
 
 namespace dlm {
@@ -22,6 +24,21 @@ public:
     DownloadResult downloadChunked(const std::string& url,
                                     const std::string& outputPath,
                                     std::int64_t chunkSize = 4 * 1024 * 1024);
+
+    // Этап 3: те же чанки, что и в downloadChunked, но качаются
+    // параллельно через ThreadPool — задача = один чанк.
+    DownloadResult downloadParallel(const std::string& url,
+                                     const std::string& outputPath,
+                                     std::int64_t chunkSize = 4 * 1024 * 1024,
+                                     std::size_t numWorkers = 4);
+
+    // Этап 4: как downloadParallel, но с метафайлом (.dlm) рядом с файлом —
+    // при повторном вызове докачивает только недостающие чанки, если сервер
+    // по If-Range подтвердил, что файл не менялся.
+    DownloadResult downloadResumable(const std::string& url,
+                                      const std::string& outputPath,
+                                      std::int64_t chunkSize = 4 * 1024 * 1024,
+                                      std::size_t numWorkers = 4);
 
 private:
     IHttpClient& httpClient_;

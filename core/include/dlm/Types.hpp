@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace dlm {
 
@@ -35,6 +36,15 @@ struct DownloadResult {
 struct ChunkSpec {
     std::int64_t offset = 0;
     std::int64_t size = 0;
+};
+
+struct DownloadMeta {
+    std::string url;
+    std::int64_t chunkSize = 0;
+    std::int64_t totalSize = 0;
+    std::string etag;
+    std::string lastModified;
+    std::vector<bool> chunkDone;
 };
 
 } // namespace dlm
