@@ -80,10 +80,10 @@ void DownloadManager::resume(std::uint64_t jobId) {
         job->cancelToken.resume();
     }
 
-    // Пауза всегда прерывает текущий вызов downloadResumable() целиком —
-    // чтобы реально продолжить именно эту закачку, ставим job в очередь
-    // пула ещё раз. Уже докачанные чанки в .dlm метафайле не потеряются,
-    // downloadResumable() продолжит ровно с того места, где остановился.
+    // A pause always aborts the current downloadResumable() call entirely —
+    // to actually continue this download, we re-enqueue the job in the
+    // pool. Chunks already downloaded in the .dlm meta file are not lost;
+    // downloadResumable() resumes exactly where it left off.
     ++pendingCount_;
     pool_.enqueue([this, job] { runJob(job); });
 }

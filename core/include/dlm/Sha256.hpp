@@ -6,16 +6,16 @@
 
 namespace dlm {
 
-// Потоковый SHA-256 (FIPS 180-4), без внешних зависимостей — считаем сами,
-// чтобы не тянуть OpenSSL только ради одной функции.
+// Streaming SHA-256 (FIPS 180-4), no external dependencies — computed
+// ourselves so we don't have to pull in OpenSSL for just one function.
 class Sha256 {
 public:
     Sha256();
 
     void update(const void* data, std::size_t size);
-    // Финализирует хэш (дописывает паддинг) и возвращает его в виде
-    // 64-символьной hex-строки. Повторный вызов update() после этого уже
-    // некорректен — создавай новый Sha256 для следующего файла.
+    // Finalizes the hash (appends the padding) and returns it as a
+    // 64-character hex string. Calling update() again after this is no
+    // longer valid — create a new Sha256 for the next file.
     std::string hexDigest();
 
 private:
@@ -27,8 +27,8 @@ private:
     std::size_t bufferLength_ = 0;
 };
 
-// Хелпер: считает SHA-256 всего файла, читая его порциями (не грузит в
-// память целиком). ok = false, если файл не открылся.
+// Helper: computes the SHA-256 of a whole file, reading it in chunks (not
+// loading it entirely into memory). ok = false if the file failed to open.
 std::string sha256File(const std::string& path, bool& ok);
 
 } // namespace dlm

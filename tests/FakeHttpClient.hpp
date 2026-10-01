@@ -11,25 +11,26 @@
 
 namespace dlm_test {
 
-// Тестовый двойник IHttpClient с поддержкой Range и If-Range, без обращения
-// к сети.
-// - acceptRanges = true: на запрос с заголовком Range отвечает 206 и куском
-//   тела, выставляя Content-Range (через contentRangeTotal), как реальный
-//   сервер, поддерживающий докачку. Всегда также возвращает etag_ в
-//   HttpResponse::etag (как реальный CurlHttpClient парсит заголовок ETag).
-// - acceptRanges = false: игнорирует Range и всегда отдаёт 200 + тело
-//   целиком — так ведёт себя сервер без поддержки Range.
-// - writeChunkSize: если > 0, тело чанка отдаётся onData несколькими
-//   вызовами по writeChunkSize байт вместо одного — так же, как это
-//   иногда делает libcurl, чтобы проверить, что запись по смещению внутри
-//   чанка накапливается правильно.
-// - failIfRangeMismatch: если true и в запросе есть заголовок If-Range,
-//   отличающийся от etag_, сервер "меняет мнение" и отдаёт 200 с телом
-//   целиком — так реальный сервер сигналит "файл изменился, докачка
-//   невозможна".
-// - rangeRequestCount считает, сколько раз приходил запрос с Range —
-//   тестам это нужно, чтобы убедиться, что уже готовые чанки не
-//   перекачиваются заново.
+// A test double for IHttpClient with Range and If-Range support, without
+// touching the network.
+// - acceptRanges = true: responds to a request with a Range header with 206
+//   and a piece of the body, setting Content-Range (via contentRangeTotal),
+//   like a real server that supports resuming downloads. Also always
+//   returns etag_ in HttpResponse::etag (the way the real CurlHttpClient
+//   parses the ETag header).
+// - acceptRanges = false: ignores Range and always returns 200 with the
+//   whole body — the way a server without Range support behaves.
+// - writeChunkSize: if > 0, the chunk body is delivered to onData in
+//   several calls of writeChunkSize bytes each instead of one — the way
+//   libcurl sometimes does, to verify that writes at an offset within the
+//   chunk accumulate correctly.
+// - failIfRangeMismatch: if true and the request has an If-Range header
+//   that differs from etag_, the server "changes its mind" and returns 200
+//   with the whole body — the way a real server signals "the file changed,
+//   resuming is not possible".
+// - rangeRequestCount counts how many times a request with Range arrived —
+//   tests need this to verify that already-completed chunks are not
+//   downloaded again.
 class FakeHttpClient final : public dlm::IHttpClient {
 public:
     explicit FakeHttpClient(std::string body, bool acceptRanges = true,
@@ -61,7 +62,7 @@ public:
 
         const auto ifRangeIt = request.headers.find("If-Range");
         if (failIfRangeMismatch_ && ifRangeIt != request.headers.end() && ifRangeIt->second != etag_) {
-            // Сервер игнорирует If-Range, если он не совпал, и отдаёт файл целиком.
+            // The server ignores If-Range when it doesn't match and returns the whole file.
             response.statusCode = 200;
             response.contentLength = static_cast<std::int64_t>(body_.size());
             if (!deliver(body_.data(), body_.size(), onData, cancelToken)) {
@@ -106,7 +107,7 @@ private:
         std::size_t sent = 0;
         while (sent < size) {
             if (cancelToken && cancelToken->shouldAbortTransfer()) {
-                return false; // имитируем CURLE_ABORTED_BY_CALLBACK
+                return false; // simulates CURLE_ABORTED_BY_CALLBACK
             }
             if (delayPerPiece_.count() > 0) {
                 std::this_thread::sleep_for(delayPerPiece_);
@@ -121,7 +122,7 @@ private:
     }
 
     static bool parseRange(const std::string& value, std::int64_t& start, std::int64_t& end) {
-        // Ожидаем "bytes=start-end".
+        // Expecting "bytes=start-end".
         const auto eq = value.find('=');
         const auto dash = value.find('-', eq == std::string::npos ? 0 : eq);
         if (eq == std::string::npos || dash == std::string::npos) {

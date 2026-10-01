@@ -2,73 +2,74 @@
 
 [![CI](https://github.com/MAX959954/download_manager/actions/workflows/ci.yml/badge.svg)](https://github.com/MAX959954/download_manager/actions/workflows/ci.yml)
 
-Многопоточный менеджер загрузок на C++: параллельная докачка файлов через
-HTTP Range-запросы, пул потоков, возобновление после обрыва, ограничение
-скорости и Qt-интерфейс.
+A multithreaded download manager in C++: parallel file downloads over
+HTTP Range requests, a thread pool, resume after interruption, speed
+limiting, and a Qt UI.
 
-## О проекте
+## About the project
 
-Multithreaded Download Manager — десктопный менеджер загрузок на C++17/Qt,
-который скачивает файл в несколько параллельных соединений, разбивая его на
-чанки и запрашивая каждый через `Range: bytes=`.
+Multithreaded Download Manager is a desktop download manager built with
+C++17/Qt that downloads a file over several parallel connections, splitting
+it into chunks and requesting each one via `Range: bytes=`.
 
-### Ключевые возможности
+### Key features
 
-- **Параллельная загрузка** — собственный пул потоков (`std::thread` +
-  `condition_variable`); N воркеров независимо качают чанки
-  `[offset, offset+size)` одного файла.
-- **Пауза и докачка** — состояние сохраняется в метафайл рядом с загрузкой
-  (карта готовых чанков, ETag/Last-Modified), загрузка продолжается после
-  перезапуска приложения или обрыва сети.
-- **Прямая запись по смещениям** — каждый воркер пишет в свой регион файла
-  (seek/pwrite), без временных частей и финальной склейки.
-- **Управление скоростью** — ограничение пропускной способности через token
-  bucket, общий лимит и лимит на загрузку.
-- **Контроль целостности** — проверка контрольной суммы (SHA-256) после
-  завершения.
-- **Отмена операций** — кооперативная остановка через `std::atomic` /
-  stop-token на любом этапе.
-- **Qt GUI** — очередь заданий, прогресс по каждому чанку, текущая скорость,
-  пауза/возобновление/отмена.
-- HTTP-слой абстрагирован за интерфейсом `IHttpClient`: реализация на
-  libcurl и (в перспективе) альтернативный клиент на сокетах + OpenSSL.
+- **Parallel downloads** — a custom thread pool (`std::thread` +
+  `condition_variable`); N workers independently download chunks
+  `[offset, offset+size)` of a single file.
+- **Pause and resume** — state is saved to a metafile next to the download
+  (a bitmap of completed chunks, ETag/Last-Modified), so the download
+  continues after an app restart or a network interruption.
+- **Direct offset writes** — each worker writes to its own region of the
+  file (seek/pwrite), with no temporary parts or final merge step.
+- **Speed control** — bandwidth limiting via a token bucket, with both a
+  global limit and a per-download limit.
+- **Integrity checking** — checksum verification (SHA-256) after
+  completion.
+- **Cancellation** — cooperative stop via `std::atomic` / a stop token at
+  any stage.
+- **Qt GUI** — a job queue, per-chunk progress, current speed,
+  pause/resume/cancel.
+- The HTTP layer is abstracted behind the `IHttpClient` interface: a
+  libcurl implementation and (eventually) an alternative client built on
+  raw sockets + OpenSSL.
 
-## Сборка
+## Building
 
-Требуется [vcpkg](https://github.com/microsoft/vcpkg) (переменная окружения
-`VCPKG_ROOT`), CMake ≥ 3.21 и Ninja.
+Requires [vcpkg](https://github.com/microsoft/vcpkg) (the `VCPKG_ROOT`
+environment variable), CMake ≥ 3.21 and Ninja.
 
 ```bash
 cmake --preset default
 cmake --build build/default
 ```
 
-Собранный CLI:
+The built CLI:
 
 ```bash
 ./build/default/download_manager <url> -o <file>
 ```
 
-## CI и проверка потокобезопасности
+## CI and thread-safety checks
 
-GitHub Actions на каждый push/PR:
+GitHub Actions on every push/PR:
 
-- **build & test** — обычная Debug-сборка (Linux, системные `libcurl`/`openssl`),
-  прогон всех офлайн-тестов через `ctest`.
-- **sanitizers** — те же тесты, собранные и прогнанные под
-  **ThreadSanitizer** и **AddressSanitizer + UndefinedBehaviorSanitizer**.
-  `Downloader`/`DownloadManager` гоняют `curl`/сокеты внутри нескольких
-  `std::thread`, разделяя `FileWriter`, метафайл и атомарные флаги паузы —
-  TSan здесь реально ловит гонки, если они появятся, а не просто
-  «зелёная галочка для вида».
-- **live network tests** — отдельный необязательный джоб: три теста ходят
-  по-настоящему в интернет (TLS-рукопожатие и Range-запросы к
-  raw.githubusercontent.com) и проверяют `SocketHttpClient`/`CurlHttpClient`
-  на живом сервере с проверкой SHA-256. Вынесены отдельно и помечены
-  `continue-on-error`, чтобы временные сетевые проблемы раннера не красили
-  основную сборку.
+- **build & test** — a regular Debug build (Linux, system `libcurl`/`openssl`),
+  running all offline tests via `ctest`.
+- **sanitizers** — the same tests, built and run under
+  **ThreadSanitizer** and **AddressSanitizer + UndefinedBehaviorSanitizer**.
+  `Downloader`/`DownloadManager` drive `curl`/sockets across several
+  `std::thread`s, sharing `FileWriter`, the metafile, and atomic pause
+  flags — TSan genuinely catches races here if they show up, rather than
+  just being a "green checkmark for show."
+- **live network tests** — a separate, optional job: three tests make real
+  network calls (a TLS handshake and Range requests to
+  raw.githubusercontent.com) and verify `SocketHttpClient`/`CurlHttpClient`
+  against a live server with SHA-256 verification. These are split out and
+  marked `continue-on-error` so that transient network issues on the
+  runner don't color the main build.
 
-Локально то же самое:
+Locally, the same thing:
 
 ```bash
 cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
@@ -78,34 +79,107 @@ cmake --build build-tsan
 ctest --test-dir build-tsan --output-on-failure -LE live
 ```
 
-## Дорожная карта
+## Benchmark: parallelism really does speed up downloads
 
-- [x] **Этап 0. Каркас** — CMake-проект (`core` / `cli` / позже `gui`),
-      зависимости через vcpkg, `dlm_core` слинкован с libcurl.
-- [x] **Этап 1. Одно соединение, один файл** — `IHttpClient` / `CurlHttpClient`
-      поверх libcurl easy handle (редиректы, `Content-Length`,
+![1 vs 4 vs 8 threads at different chunk sizes](benchmarks/benchmark.png)
+
+**Methodology.** We download the same file (20 MB) via
+`Downloader::downloadParallel` on top of our own `SocketHttpClient`
+(Stage 8) from a local HTTP server (`benchmarks/throttled_server.py`),
+which artificially throttles the speed of **each individual TCP
+connection** to 1 MB/s — this models the typical scenario parallel
+downloads exist for in the first place: many real servers/CDNs limit
+speed per connection rather than in aggregate. The local server gives
+reproducible numbers (no internet noise), but the effect itself — the
+speedup from multiple connections — is entirely real. Each data point is
+the median of 3 runs.
+
+| Chunk   | 1 thread | 4 threads | 8 threads | 8 vs 1 speedup |
+|---------|----------|-----------|-----------|-----------------|
+| 256 KB  | 1.1 MB/s | 4.4 MB/s  | 8.7 MB/s  | **~7.9x**       |
+| 1 MB    | 1.0 MB/s | 4.0 MB/s  | 7.7 MB/s  | **~7.5x**       |
+| 4 MB    | 1.0 MB/s | 4.0 MB/s  | 7.8 MB/s  | **~7.8x**       |
+| 10 MB   | 1.0 MB/s | 3.9 MB/s  | 7.2 MB/s  | **~7.2x**       |
+
+The speedup is now almost independent of chunk size — and that wasn't
+always the case.
+
+### Adaptive chunking / work stealing
+
+Originally (handing out fixed chunks statically, one HTTP request per
+chunk), the result depended heavily on chunk size: with a 4 MB chunk on a
+20 MB file you get only 5 chunks, and the 8th thread simply has nothing to
+download — the gain was capped at 5 simultaneous connections, not the
+number of threads. With a 10 MB chunk (2 chunks per file) the effect is
+even worse: **4 and 8 threads gave the same 2.01 MB/s** — the extra
+threads did nothing at all.
+
+To fix this, `Downloader::downloadParallel` no longer hands out a fixed
+list of ranges to workers up front. Instead
+([`ChunkQueue`](core/include/dlm/ChunkQueue.hpp)), every worker that frees
+up goes to a shared queue for the next range — and if there are fewer
+ranges in the queue than workers, the largest of the remaining ranges is
+split in half right at hand-out time. In effect, this is a free worker
+"stealing" the not-yet-started half of someone else's range — honest
+work-stealing to the extent it's even possible on top of HTTP: an
+in-flight Range request can't be interrupted (a TCP stream can't be cut
+short without closing and reopening the connection), so only what hasn't
+been handed out to anyone yet gets split.
+
+![Before/after ChunkQueue at a 10 MB chunk size](benchmarks/before_after.png)
+
+| Threads | Before (static chunks) | After (ChunkQueue) |
+|---------|-------------------------|----------------------|
+| 1       | 1.00 MB/s               | 1.00 MB/s            |
+| 4       | 2.01 MB/s               | 3.93 MB/s            |
+| 8       | 2.01 MB/s               | **7.16 MB/s**        |
+
+With a 10 MB chunk, the old code didn't speed up at all past 4 threads
+(capped by the 2 original chunks); the new one scales almost linearly and
+reaches the same level as small chunks even at 8 threads. "Before" was
+measured the same way on the same server — a reconstruction of the
+original static algorithm lives in `benchmarks/old_static_bench.cpp` (not
+part of the production code, used only for this comparison).
+
+Run it yourself:
+
+```bash
+python3 benchmarks/throttled_server.py 8787 &
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DDLM_BUILD_BENCHMARKS=ON
+cmake --build build-bench
+./build-bench/benchmarks/bench_downloader http://127.0.0.1:8787/file benchmarks/results.csv 3
+python3 benchmarks/plot_results.py
+python3 benchmarks/plot_before_after.py
+```
+
+## Roadmap
+
+- [x] **Stage 0. Skeleton** — CMake project (`core` / `cli` / `gui` later),
+      dependencies via vcpkg, `dlm_core` linked against libcurl.
+- [x] **Stage 1. One connection, one file** — `IHttpClient` / `CurlHttpClient`
+      on top of a libcurl easy handle (redirects, `Content-Length`,
       `Accept-Ranges`, `ETag`/`Last-Modified`), `Downloader::downloadToFile`
-      пишет тело ответа в файл потоком. `dlm <url> -o file` работает.
-- [ ] **Этап 2. Чанки, но последовательно** — разбиение на чанки
-      фиксированного размера, преаллокация файла, запись по offset.
-- [ ] **Этап 3. Thread pool** — свой пул воркеров, каждый со своим CURL easy
-      handle.
-- [ ] **Этап 4. Докачка** — метафайл `file.dlm`, `If-Range`, битовая карта
-      готовых чанков.
-- [ ] **Этап 5. Пауза/отмена** — кооперативная остановка через
+      streams the response body to a file. `dlm <url> -o file` works.
+- [ ] **Stage 2. Chunks, but sequential** — splitting into fixed-size
+      chunks, file preallocation, offset writes.
+- [ ] **Stage 3. Thread pool** — a custom worker pool, each with its own
+      CURL easy handle.
+- [ ] **Stage 4. Resume** — a `file.dlm` metafile, `If-Range`, a bitmap of
+      completed chunks.
+- [ ] **Stage 5. Pause/cancel** — cooperative stop via
       `CURLOPT_XFERINFOFUNCTION`.
-- [ ] **Этап 6. Менеджер загрузок** — очередь заданий, публичный API для GUI.
-- [ ] **Этап 7. Qt GUI** — тонкий слой поверх API движка.
-- [ ] **Этап 8. «Вау»** — token bucket, SHA-256, ретраи с backoff, свой
-      HTTP+TLS клиент.
+- [ ] **Stage 6. Download manager** — a job queue, a public API for the GUI.
+- [ ] **Stage 7. Qt GUI** — a thin layer on top of the engine's API.
+- [ ] **Stage 8. The "wow" stage** — a token bucket, SHA-256, retries with
+      backoff, a custom HTTP+TLS client.
 
-### Решения, принятые заранее
+### Decisions made up front
 
-| Вопрос | Решение |
+| Question | Decision |
 |---|---|
-| Модель чанков | Фиксированный размер + очередь, не N равных частей |
-| Запись | Преаллокация + запись по offset, без временных частей и склейки |
-| Пул | Один глобальный, задача = чанк; per-download только счётчики/флаги |
-| HTTP | libcurl easy handle на поток; свой клиент — в конце |
-| Валидация докачки | Хранить и слать `ETag`/`Last-Modified` через `If-Range` |
-| Fallback | Нет `Accept-Ranges` → одно соединение, без чанков |
+| Chunk model | Fixed size + a queue, not N equal parts |
+| Writing | Preallocation + offset writes, no temporary parts or merging |
+| Pool | One global pool, task = chunk; per-download state is just counters/flags |
+| HTTP | One libcurl easy handle per thread; a custom client comes last |
+| Resume validation | Store and send `ETag`/`Last-Modified` via `If-Range` |
+| Fallback | No `Accept-Ranges` → a single connection, no chunking |

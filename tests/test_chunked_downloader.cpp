@@ -18,7 +18,7 @@ std::string readFile(const std::string& path) {
 }
 
 std::string makeBody(std::size_t size) {
-    // Не просто "все нули" — чтобы ошибка в offset'ах не осталась незамеченной.
+    // Not just "all zeros" — so that an offset bug wouldn't go unnoticed.
     std::string body(size, '\0');
     for (std::size_t i = 0; i < size; ++i) {
         body[i] = static_cast<char>('A' + (i % 26));
@@ -29,13 +29,13 @@ std::string makeBody(std::size_t size) {
 } // namespace
 
 int main() {
-    // Размер не кратен размеру чанка — проверяем и обычные, и последний
-    // (укороченный) чанк.
+    // Size is not a multiple of the chunk size — this checks both regular
+    // chunks and the last (shortened) chunk.
     const std::string body = makeBody(10 * 1000 + 123);
     const std::int64_t chunkSize = 4000;
 
-    // 1) Чанки бьются ровно так, как договорились: несколько Range-запросов,
-    //    запись по offset, без склейки временных файлов.
+    // 1) Chunks are split exactly as agreed: several Range requests,
+    //    writes at the given offset, no merging of temporary files.
     {
         dlm_test::FakeHttpClient fakeClient(body, /*acceptRanges=*/true, /*writeChunkSize=*/777);
         dlm::Downloader downloader(fakeClient);
@@ -51,7 +51,7 @@ int main() {
         std::remove(outputPath.c_str());
     }
 
-    // 2) Сверка с обычной (Этап 1) загрузкой — файлы должны совпасть побайтово.
+    // 2) Comparison with the regular (Stage 1) download — the files must match byte-for-byte.
     {
         dlm_test::FakeHttpClient fakeClientChunked(body, /*acceptRanges=*/true);
         dlm::Downloader chunkedDownloader(fakeClientChunked);
@@ -73,8 +73,8 @@ int main() {
         std::remove(plainPath.c_str());
     }
 
-    // 3) Сервер без поддержки Range — откат на downloadToFile, файл всё
-    //    равно должен получиться корректным.
+    // 3) Server without Range support — falls back to downloadToFile, the
+    //    file must still come out correct.
     {
         dlm_test::FakeHttpClient fakeClient(body, /*acceptRanges=*/false);
         dlm::Downloader downloader(fakeClient);

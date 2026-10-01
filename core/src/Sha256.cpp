@@ -82,7 +82,7 @@ void Sha256::update(const void* data, std::size_t size) {
 }
 
 std::string Sha256::hexDigest() {
-    const std::uint64_t totalBits = bitLength_; // запоминаем ДО паддинга
+    const std::uint64_t totalBits = bitLength_; // remember this BEFORE padding
 
     const std::uint8_t one = 0x80;
     update(&one, 1);

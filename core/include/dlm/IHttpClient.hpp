@@ -5,13 +5,13 @@
 
 namespace dlm {
 
-// Абстракция HTTP-бэкенда. Позволяет подменить libcurl на собственный
-// сокетный клиент (Этап 8), не меняя Downloader.
+// Abstraction over the HTTP backend. Lets us swap libcurl for our own
+// socket-based client (Stage 8) without changing Downloader.
 class IHttpClient {
 public:
     virtual ~IHttpClient() = default;
 
-    // Выполняет запрос, передавая тело ответа в onData по мере получения.
+    // Performs the request, passing the response body to onData as it arrives.
     virtual HttpResponse perform(const HttpRequest& request, const WriteCallback& onData , 
                                                     const CancelToken * cancelToken = nullptr) = 0;
 };

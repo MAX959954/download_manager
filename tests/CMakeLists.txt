@@ -62,9 +62,9 @@ target_include_directories(test_download_manager PRIVATE ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(test_download_manager PRIVATE dlm_core PRIVATE dlm_warnings)
 add_test(NAME test_download_manager COMMAND test_download_manager)
 
-# --- Этап 8: собственный HTTP+TLS-клиент на сырых сокетах ---
-# Чистые юнит-тесты разбора URL/заголовков/chunked-кодирования — без сети,
-# гоняются в обычном ctest вместе со всеми остальными.
+# --- Stage 8: a custom HTTP+TLS client on raw sockets ---
+# Pure unit tests for URL/header/chunked-encoding parsing — no network,
+# run in the regular ctest alongside everything else.
 
 add_executable(test_url_parsing
     test_url_parsing.cpp
@@ -87,11 +87,12 @@ target_include_directories(test_chunked_decoder PRIVATE ${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(test_chunked_decoder PRIVATE dlm_core PRIVATE dlm_warnings)
 add_test(NAME test_chunked_decoder COMMAND test_chunked_decoder)
 
-# --- "_live" тесты ниже реально ходят в интернет (GitHub) и проверяют
-# SocketHttpClient/CurlHttpClient на настоящем TLS-сервере. Собираются и
-# регистрируются в ctest как обычно, но держи в голове, что они не пройдут
-# без сети (например, в офлайн-CI) — это осознанный компромисс ради
-# честной end-to-end проверки TLS-рукопожатия, которую никакой фейк не даст.
+# --- The "_live" tests below make real network calls (to GitHub) and
+# verify SocketHttpClient/CurlHttpClient against a real TLS server. They're
+# built and registered in ctest like any other test, but keep in mind they
+# won't pass without network access (e.g. in an offline CI) — a deliberate
+# trade-off for an honest end-to-end TLS handshake check that no fake
+# client can give you.
 
 add_executable(test_socket_http_client_live
     test_socket_http_client_live.cpp

@@ -8,7 +8,7 @@
 
 namespace dlm {
 
-// Возвращает false, чтобы прервать передачу (см. CURLOPT_WRITEFUNCTION).
+// Return false to abort the transfer (see CURLOPT_WRITEFUNCTION).
 using WriteCallback = std::function<bool(const char* data, std::size_t size)>;
 
 struct HttpRequest {
@@ -31,7 +31,7 @@ struct DownloadResult {
     std::int64_t bytesWritten = 0;
     bool success = false;
     std::string error;
-    std::string sha256; // заполняется, если скачивание дошло до финальной проверки
+    std::string sha256; // filled in if the download reached the final verification step
 };
 
 struct ChunkSpec {

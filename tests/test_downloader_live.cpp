@@ -1,6 +1,7 @@
-// Интеграционный тест: Downloader + реальный SocketHttpClient против живого
-// сервера (GitHub raw). Требует интернет — в отличие от остальных тестов
-// на FakeHttpClient, этот не рассчитан на офлайн/CI без сети.
+// Integration test: Downloader + a real SocketHttpClient against a live
+// server (GitHub raw). Requires internet access — unlike the other tests,
+// which use FakeHttpClient, this one is not meant for offline/CI without
+// network access.
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -21,7 +22,7 @@ std::string readFile(const std::string& path) {
 
 int main() {
     const std::string url = "https://raw.githubusercontent.com/nodejs/node/main/LICENSE";
-    // Известный заранее хэш файла (сверен отдельно через curl+sha256sum).
+    // The file's hash, known ahead of time (verified separately via curl+sha256sum).
     const std::string expectedSha256 =
         "37110192cd7621a80510e2f2630ae08f0420f97257d4ae1c4d51c11261f1f4b7";
 
@@ -43,8 +44,8 @@ int main() {
 
     std::remove(outputPath.c_str());
 
-    std::printf("test_downloader_live: OK — собственный HTTP+TLS клиент на сырых сокетах\n"
-                 "скачал реальный файл по HTTPS с несколькими параллельными Range-запросами,\n"
-                 "и его SHA-256 совпал с эталонным.\n");
+    std::printf("test_downloader_live: OK — our own HTTP+TLS client on raw sockets\n"
+                 "downloaded a real file over HTTPS with several parallel Range requests,\n"
+                 "and its SHA-256 matched the reference value.\n");
     return 0;
 }

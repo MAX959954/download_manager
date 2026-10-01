@@ -21,7 +21,7 @@ int main() {
         assert(!u.https);
         assert(u.host == "example.com");
         assert(u.port == 80);
-        assert(u.target == "/"); // путь по умолчанию
+        assert(u.target == "/"); // default path
     }
     {
         ParsedUrl u;
@@ -32,15 +32,15 @@ int main() {
     }
     {
         ParsedUrl u;
-        assert(!parseUrl("ftp://example.com/file", u)); // неподдерживаемая схема
+        assert(!parseUrl("ftp://example.com/file", u)); // unsupported scheme
     }
     {
         ParsedUrl u;
-        assert(!parseUrl("https://", u)); // пустая authority
+        assert(!parseUrl("https://", u)); // empty authority
     }
     {
         ParsedUrl u;
-        assert(!parseUrl("http://example.com:notanumber/x", u)); // битый порт
+        assert(!parseUrl("http://example.com:notanumber/x", u)); // malformed port
     }
 
     std::printf("test_url_parsing: OK\n");

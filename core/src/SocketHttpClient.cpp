@@ -31,9 +31,9 @@ namespace dlm {
 
 namespace {
 
-// --- Платформенная инициализация сокетов (Winsock нужен только на Windows,
-//     как curl_global_init/cleanup в CurlHttpClient — считаем живые
-//     экземпляры, чтобы вызвать её ровно один раз за процесс). ---
+// --- Platform socket initialization (Winsock is only needed on Windows,
+//     same as curl_global_init/cleanup in CurlHttpClient — we count live
+//     instances so it's called exactly once per process). ---
 
 std::mutex g_initMutex;
 int g_initCount = 0;
@@ -84,7 +84,7 @@ socket_t tcpConnect(const std::string& host, std::uint16_t port) {
             continue;
         }
         if (connect(sock, it->ai_addr, static_cast<int>(it->ai_addrlen)) == 0) {
-            break; // подключились
+            break; // connected
         }
         closeSocket(sock);
         sock = kInvalidSocket;
@@ -94,8 +94,9 @@ socket_t tcpConnect(const std::string& host, std::uint16_t port) {
     return sock;
 }
 
-// Обёртка над соединением: прозрачно работает и с TLS (SSL_read/write), и с
-// обычным TCP (для http://), чтобы остальной код не знал об этой разнице.
+// A wrapper around the connection: works transparently with both TLS
+// (SSL_read/write) and plain TCP (for http://), so the rest of the code
+// doesn't need to know the difference.
 class Connection {
 public:
     Connection() = default;
@@ -132,7 +133,7 @@ public:
         }
         SSL_set_fd(ssl_, static_cast<int>(fd_));
         SSL_set_tlsext_host_name(ssl_, host.c_str()); // SNI
-        SSL_set1_host(ssl_, host.c_str());            // сверка имени в сертификате
+        SSL_set1_host(ssl_, host.c_str());            // verify the hostname against the certificate
 
         if (SSL_connect(ssl_) != 1) {
             return false;
@@ -153,8 +154,8 @@ public:
         return true;
     }
 
-    // Возвращает число прочитанных байт; 0 — сервер аккуратно закрыл
-    // соединение; -1 — ошибка чтения.
+    // Returns the number of bytes read; 0 — the server closed the
+    // connection cleanly; -1 — a read error.
     int readSome(char* buf, int maxLen) {
         return ssl_ ? SSL_read(ssl_, buf, maxLen) : static_cast<int>(recv(fd_, buf, maxLen, 0));
     }
@@ -189,7 +190,7 @@ private:
 std::string buildRequestText(const ParsedUrl& url, const HttpRequest& request) {
     std::string req = "GET " + url.target + " HTTP/1.1\r\n";
     req += "Host: " + url.host + "\r\n";
-    req += "Connection: close\r\n"; // без keep-alive — проще, и достаточно для одного запроса
+    req += "Connection: close\r\n"; // no keep-alive — simpler, and enough for a single request
     req += "User-Agent: dlm-socket-client/1.0\r\n";
     for (const auto& [key, value] : request.headers) {
         req += key + ": " + value + "\r\n";
@@ -206,7 +207,7 @@ SocketHttpClient::~SocketHttpClient() = default;
 
 HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const WriteCallback& onData,
                                         const CancelToken* cancelToken) {
-    HttpResponse failure; // statusCode остаётся 0 — тот же сигнал ошибки, что и у CurlHttpClient
+    HttpResponse failure; // statusCode stays 0 — the same error signal as in CurlHttpClient
     std::string currentUrl = originalRequest.url;
 
     for (int redirectCount = 0; redirectCount <= maxRedirects_; ++redirectCount) {
@@ -229,7 +230,7 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
             return failure;
         }
 
-        // Читаем, пока не наберём весь блок заголовков (до "\r\n\r\n").
+        // Keep reading until we have the whole header block (up to "\r\n\r\n").
         std::string buffer;
         char recvBuf[16 * 1024];
         std::size_t headerEnd = std::string::npos;
@@ -243,11 +244,11 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
             }
             const int n = conn.readSome(recvBuf, sizeof(recvBuf));
             if (n <= 0) {
-                return failure; // оборвалось раньше, чем пришли все заголовки
+                return failure; // the connection dropped before all headers arrived
             }
             buffer.append(recvBuf, static_cast<std::size_t>(n));
             if (buffer.size() > 64 * 1024) {
-                return failure; // заголовки подозрительно большие — что-то не так
+                return failure; // headers are suspiciously large — something's wrong
             }
         }
 
@@ -294,7 +295,7 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
                                  parsed.statusCode == 303 || parsed.statusCode == 307 ||
                                  parsed.statusCode == 308;
         if (isRedirect && !locationHeader.empty() && redirectCount < maxRedirects_) {
-            currentUrl = locationHeader; // упрощение: ожидаем абсолютный URL в Location
+            currentUrl = locationHeader; // simplification: we expect an absolute URL in Location
             continue;
         }
 
@@ -309,7 +310,7 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
                 }
                 const int n = conn.readSome(recvBuf, sizeof(recvBuf));
                 if (n <= 0) {
-                    bodyOk = false; // оборвалось раньше терминирующего чанка
+                    bodyOk = false; // the connection dropped before the terminating chunk
                     break;
                 }
                 bodyStart.append(recvBuf, static_cast<std::size_t>(n));
@@ -330,7 +331,7 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
                 }
                 const int n = conn.readSome(recvBuf, sizeof(recvBuf));
                 if (n <= 0) {
-                    bodyOk = false; // сервер закрылся раньше, чем обещал в Content-Length
+                    bodyOk = false; // the server closed earlier than promised by Content-Length
                     break;
                 }
                 const std::int64_t take = std::min<std::int64_t>(n, parsed.contentLength - delivered);
@@ -338,8 +339,8 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
                 delivered += take;
             }
         } else {
-            // Ни Content-Length, ни chunked — читаем до закрытия соединения
-            // (у нас всегда "Connection: close", так что это корректно).
+            // Neither Content-Length nor chunked — read until the connection
+            // closes (we always send "Connection: close", so this is correct).
             if (!bodyStart.empty()) {
                 bodyOk = onData(bodyStart.data(), bodyStart.size());
             }
@@ -350,7 +351,7 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
                 }
                 const int n = conn.readSome(recvBuf, sizeof(recvBuf));
                 if (n <= 0) {
-                    break; // штатное закрытие соединения сервером = конец тела
+                    break; // a normal connection close by the server = end of body
                 }
                 bodyOk = onData(recvBuf, static_cast<std::size_t>(n));
             }
@@ -364,7 +365,7 @@ HttpResponse SocketHttpClient::perform(const HttpRequest& originalRequest, const
         return parsed;
     }
 
-    return failure; // слишком много редиректов подряд
+    return failure; // too many redirects in a row
 }
 
 } // namespace dlm

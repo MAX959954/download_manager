@@ -25,8 +25,8 @@ int main() {
     {
         std::string name, value;
         assert(parseHeaderFieldLine("Content-Type: text/html; charset=utf-8", name, value));
-        assert(name == "content-type"); // приводится к нижнему регистру
-        assert(value == "text/html; charset=utf-8"); // обрезаны только крайние пробелы
+        assert(name == "content-type"); // converted to lowercase
+        assert(value == "text/html; charset=utf-8"); // only the outer whitespace is trimmed
     }
     {
         std::string name, value;
@@ -50,7 +50,7 @@ int main() {
     }
     {
         dlm::HttpResponse response;
-        applyHeaderField("content-range", "bytes 0-9/*", response); // общий размер неизвестен
+        applyHeaderField("content-range", "bytes 0-9/*", response); // total size unknown
         assert(response.contentRangeTotal == -1);
     }
     {

@@ -16,19 +16,19 @@ class Downloader {
 public:
     explicit Downloader(IHttpClient& httpClient);
 
-    // Этап 1: одно соединение, файл целиком, без чанков и докачки.
+    // Stage 1: a single connection, the whole file, no chunking or resume.
     DownloadResult downloadToFile(const std::string& url, const std::string& outputPath);
 
-    // Этап 2: файл делится на чанки фиксированного размера и качается
-    // последовательно; каждый чанк — отдельный Range-запрос, запись сразу
-    // по своему offset. Если сервер не подтвердил поддержку Range —
-    // откат на downloadToFile.
+    // Stage 2: the file is split into fixed-size chunks and downloaded
+    // sequentially; each chunk is a separate Range request, written
+    // straight to its own offset. If the server doesn't confirm Range
+    // support — fall back to downloadToFile.
     DownloadResult downloadChunked(const std::string& url,
                                     const std::string& outputPath,
                                     std::int64_t chunkSize = 4 * 1024 * 1024);
 
-    // Этап 3: те же чанки, что и в downloadChunked, но качаются
-    // параллельно через ThreadPool — задача = один чанк.
+    // Stage 3: the same chunks as in downloadChunked, but downloaded in
+    // parallel via ThreadPool — one task per chunk.
     DownloadResult downloadParallel(const std::string& url,
                                      const std::string& outputPath,
                                      std::int64_t chunkSize = 4 * 1024 * 1024,
@@ -38,9 +38,10 @@ public:
                                      const std::string& expectedSha256 = "",
                                      RateLimiter* rateLimiter = nullptr);
 
-    // Этап 4: как downloadParallel, но с метафайлом (.dlm) рядом с файлом —
-    // при повторном вызове докачивает только недостающие чанки, если сервер
-    // по If-Range подтвердил, что файл не менялся.
+    // Stage 4: like downloadParallel, but with a meta file (.dlm) next to
+    // the output file — on a repeated call, resumes only the missing
+    // chunks, provided the server confirmed via If-Range that the file
+    // hasn't changed.
     DownloadResult downloadResumable(const std::string& url,
                                       const std::string& outputPath,
                                       std::int64_t chunkSize = 4 * 1024 * 1024,

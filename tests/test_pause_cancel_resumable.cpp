@@ -42,16 +42,16 @@ int main() {
 	const std::string outputPath = "test_pause_cancel.tmp";
 	const std::string metaPath = dlm::MetaFile::pathFor(outputPath);
 
-	// writeChunkSize маленький + искусственная задержка между кусочками —
-	// иначе FakeHttpClient отдаёт данные мгновенно и вся закачка успевает
-	// завершиться раньше, чем сработает pause() из соседнего потока.
+	// writeChunkSize is small + there's an artificial delay between pieces —
+	// otherwise FakeHttpClient delivers data instantly and the whole download
+	// manages to finish before pause() from the other thread kicks in.
 	dlm_test::FakeHttpClient fakeClient(body, /*acceptRanges=*/true, /*writeChunkSize=*/50,
 	                                     /*etag=*/"", /*failIfRangeMismatch=*/false,
 	                                     /*delayPerPiece=*/std::chrono::milliseconds(2));
 	dlm::Downloader downloader(fakeClient);
 	dlm::CancelToken token;
 
-	// Через небольшую задержку ставим загрузку на паузу прямо посреди неё.
+	// After a short delay, pause the download right in the middle of it.
 	std::thread pauser([&] {
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		token.pause();
@@ -61,18 +61,18 @@ int main() {
 		downloader.downloadResumable(url, outputPath, chunkSize, 4, &token);
 	pauser.join();
 
-	// Загрузка должна была прерваться, не завершившись успехом, но метафайл
-	// должен остаться — в нём отмечено, что реально успели докачать.
+	// The download should have been interrupted without succeeding, but the
+	// meta file should remain — it records what was actually downloaded so far.
 	assert(!first.success);
 	assert(fileExists(metaPath));
 
-	// "Возобновляем" загрузку — снимаем паузу и качаем уже без токена.
+	// "Resume" the download — lift the pause and download without the token this time.
 	token.resume();
 	const dlm::DownloadResult second = downloader.downloadResumable(url, outputPath, chunkSize, 4);
 
 	assert(second.success);
 	assert(readline(outputPath) == body);
-	assert(!fileExists(metaPath)); // метафайл убран после успешного завершения
+	assert(!fileExists(metaPath)); // the meta file is removed after successful completion
 
 	std::remove(outputPath.c_str());
 

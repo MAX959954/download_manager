@@ -32,8 +32,8 @@ std::string makeBody(std::size_t size) {
 int main() {
     const std::string body = makeBody(5000);
 
-    // maxConcurrentDownloads = 1 — job'ы идут строго по очереди, поэтому
-    // FakeHttpClient можно спокойно шарить между ними без гонок.
+    // maxConcurrentDownloads = 1 — jobs run strictly sequentially, so
+    // FakeHttpClient can safely be shared between them without races.
     dlm_test::FakeHttpClient fakeClient(body, /*acceptRanges=*/true, /*writeChunkSize=*/200);
     dlm::DownloadManager manager(fakeClient, /*maxConcurrentDownloads=*/1, /*workersPerDownload=*/2);
 
@@ -57,8 +57,8 @@ int main() {
     std::remove("dm_test_b.tmp");
     std::remove("dm_test_c.tmp");
 
-    // Отмена: ставим закачку с искусственной задержкой (чтобы она не успела
-    // завершиться мгновенно) и отменяем её почти сразу после старта.
+    // Cancellation: queue a download with an artificial delay (so it doesn't
+    // finish instantly) and cancel it almost immediately after it starts.
     dlm_test::FakeHttpClient slowClient(body, /*acceptRanges=*/true, /*writeChunkSize=*/100,
                                          /*etag=*/"", /*failIfRangeMismatch=*/false,
                                          /*delayPerPiece=*/std::chrono::milliseconds(2));

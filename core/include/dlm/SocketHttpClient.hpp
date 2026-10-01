@@ -4,24 +4,25 @@
 
 namespace dlm {
 
-// Минимальный HTTP/1.1-клиент на сырых сокетах + OpenSSL для TLS — своя
-// реализация того, что под капотом делает libcurl, спрятанная за тем же
-// IHttpClient, что и CurlHttpClient, так что Downloader не знает (и не
-// должен знать) разницы между ними.
+// A minimal HTTP/1.1 client on raw sockets + OpenSSL for TLS — our own
+// implementation of what libcurl does under the hood, hidden behind the
+// same IHttpClient as CurlHttpClient, so Downloader doesn't know (and
+// doesn't need to know) the difference between them.
 //
-// Поддерживает: GET с произвольными заголовками (в т.ч. Range/If-Range),
-// редиректы (301/302/303/307/308, до maxRedirects подряд), тело по
-// Content-Length, chunked transfer-encoding, проверку сертификата сервера
-// (включая имя хоста) и SNI.
+// Supports: GET with arbitrary headers (including Range/If-Range),
+// redirects (301/302/303/307/308, up to maxRedirects in a row), a body
+// delivered via Content-Length, chunked transfer-encoding, verifying the
+// server's certificate (including the hostname), and SNI.
 //
-// НЕ поддерживает (сознательное упрощение для учебного клиента):
-// keep-alive — каждый perform() открывает новое TCP(+TLS)-соединение и
-// всегда шлёт "Connection: close"; HTTP/2; сжатие ответа (gzip/br).
+// Does NOT support (a deliberate simplification for a learning-project
+// client): keep-alive — every perform() opens a new TCP(+TLS) connection
+// and always sends "Connection: close"; HTTP/2; response compression
+// (gzip/br).
 //
-// На Windows SSL_CTX_set_default_verify_paths() полагается на переменные
-// окружения OpenSSL, а не на системное хранилище сертификатов Windows —
-// если проверка сертификата не проходит, укажи путь к CA-бандлу (например,
-// https://curl.se/ca/cacert.pem) в переменной окружения DLM_CA_BUNDLE.
+// On Windows, SSL_CTX_set_default_verify_paths() relies on OpenSSL
+// environment variables rather than the Windows system certificate store —
+// if certificate verification fails, point the DLM_CA_BUNDLE environment
+// variable at a CA bundle (e.g. https://curl.se/ca/cacert.pem).
 class SocketHttpClient final : public IHttpClient {
 public:
     explicit SocketHttpClient(int maxRedirects = 5);

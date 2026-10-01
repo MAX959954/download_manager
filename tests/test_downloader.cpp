@@ -9,7 +9,7 @@
 
 namespace {
 
-// Тестовый двойник IHttpClient: отдаёт заранее заданное тело без обращения к сети.
+// A test double for IHttpClient: returns a predefined body without touching the network.
 class FakeHttpClient final : public dlm::IHttpClient {
 public:
     explicit FakeHttpClient(std::string body, long statusCode = 200, bool acceptRanges = true)

@@ -5,19 +5,19 @@
 
 namespace dlm {
 
-// Запись по произвольным смещениям в один файл. На Windows нет pwrite,
-// поэтому каждый writeAt открывает свой файловый дескриптор и делает
-// seek+write. Несколько FileWriter, указывающих на один и тот же файл
-// (по одному на воркер), — это нормально, см. Этап 3.
+// Writes to arbitrary offsets in a single file. Windows has no pwrite, so
+// each writeAt opens its own file handle and does a seek+write. Having
+// several FileWriters pointing at the same file (one per worker) is fine —
+// see Stage 3.
 class FileWriter {
 public:
     explicit FileWriter(std::string path);
 
-    // Создаёт файл (если его ещё нет) и растягивает до totalSize байт.
-    // Вызывается один раз перед стартом закачки чанков.
+    // Creates the file (if it doesn't exist yet) and stretches it to
+    // totalSize bytes. Called once before chunk downloading starts.
     static bool preallocate(const std::string& path, std::int64_t totalSize);
 
-    // Пишет size байт из data начиная с offset.
+    // Writes size bytes from data starting at offset.
     bool writeAt(std::int64_t offset, const char* data, std::size_t size);
 
 private:

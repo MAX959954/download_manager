@@ -1,4 +1,5 @@
 #include "dlm/Downloader.hpp"
+#include "dlm/ChunkQueue.hpp"
 #include "dlm/FileWriter.hpp"
 #include "dlm/MetaFile.hpp"
 #include "dlm/Sha256.hpp"
@@ -23,7 +24,7 @@ bool verifySha256(DownloadResult& result, const std::string& outputPath,
     result.sha256 = sha256File(outputPath, hashOk);
     if (!hashOk) {
         result.success = false;
-        result.error = "не удалось посчитать SHA-256: " + outputPath;
+        result.error = "failed to compute SHA-256: " + outputPath;
         return false;
     }
     if (expectedSha256.empty()) {
@@ -35,8 +36,8 @@ bool verifySha256(DownloadResult& result, const std::string& outputPath,
     };
     if (toLower(result.sha256) != toLower(expectedSha256)) {
         result.success = false;
-        result.error = "SHA-256 не совпадает: ожидалось " + expectedSha256 +
-                        ", получено " + result.sha256;
+        result.error = "SHA-256 mismatch: expected " + expectedSha256 +
+                        ", got " + result.sha256;
         return false;
     }
     return true;
@@ -51,7 +52,7 @@ DownloadResult Downloader::downloadToFile(const std::string& url, const std::str
 
     std::ofstream out(outputPath, std::ios::binary | std::ios::trunc);
     if (!out) {
-        result.error = "не удалось открыть файл для записи: " + outputPath;
+        result.error = "failed to open the file for writing: " + outputPath;
         return result;
     }
 
@@ -74,8 +75,8 @@ DownloadResult Downloader::downloadToFile(const std::string& url, const std::str
     result.success = httpOk && !writeFailed;
 
     if (!result.success) {
-        result.error = writeFailed ? ("ошибка записи в файл: " + outputPath)
-                                    : ("HTTP статус " + std::to_string(result.response.statusCode));
+        result.error = writeFailed ? ("error writing to file: " + outputPath)
+                                    : ("HTTP status " + std::to_string(result.response.statusCode));
     }
 
     return result;
@@ -87,7 +88,7 @@ DownloadResult Downloader::downloadChunked(const std::string& url,
     DownloadResult result;
 
     if (chunkSize <= 0) {
-        result.error = "chunkSize должен быть положительным";
+        result.error = "chunkSize must be positive";
         return result;
     }
 
@@ -103,7 +104,7 @@ DownloadResult Downloader::downloadChunked(const std::string& url,
 
     const std::int64_t totalSize = probe.contentRangeTotal;
     if (!FileWriter::preallocate(outputPath, totalSize)) {
-        result.error = "не удалось преаллоцировать файл: " + outputPath;
+        result.error = "failed to preallocate the file: " + outputPath;
         return result;
     }
 
@@ -133,7 +134,7 @@ DownloadResult Downloader::downloadChunked(const std::string& url,
                               writtenInChunk == size;
 
         if (!chunkOk) {
-            result.error = "ошибка чанка [" + std::to_string(offset) + ", " +
+            result.error = "chunk error [" + std::to_string(offset) + ", " +
                             std::to_string(offset + size) + "): HTTP " +
                             std::to_string(chunkResponse.statusCode);
             result.response = chunkResponse;
@@ -163,7 +164,7 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
     DownloadResult result;
 
     if (chunkSize <= 0 || numWorkers == 0) {
-        result.error = "chunkSize и numWorkers должны быть положительными";
+        result.error = "chunkSize and numWorkers must be positive";
         return result;
     }
 
@@ -174,102 +175,123 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
     const HttpResponse probe = httpClient_.perform(probeRequest, discard);
 
     if (probe.statusCode != 206 || probe.contentRangeTotal <= 0) {
-        return downloadToFile(url, outputPath); // сервер без Range — фолбэк
+        return downloadToFile(url, outputPath); // server doesn't support Range — fall back
     }
 
     const std::int64_t totalSize = probe.contentRangeTotal;
     if (!FileWriter::preallocate(outputPath, totalSize)) {
-        result.error = "не удалось преаллоцировать файл: " + outputPath;
+        result.error = "failed to preallocate the file: " + outputPath;
         return result;
     }
 
-    std::vector<ChunkSpec> chunks;
-    for (std::int64_t offset = 0; offset < totalSize; offset += chunkSize) {
-        chunks.push_back({offset, std::min(chunkSize, totalSize - offset)});
-    }
-
     FileWriter writer(outputPath);
+    ChunkQueue chunkQueue(totalSize, chunkSize, numWorkers);
+
     std::atomic<std::int64_t> bytesDone{0};
     std::atomic<bool> anyFailed{false};
     std::mutex errorMutex;
     std::string firstError;
 
-    std::atomic<std::size_t> remaining{chunks.size()};
+    std::atomic<std::size_t> remaining{numWorkers};
     std::mutex doneMutex;
     std::condition_variable doneCv;
 
+    // Downloads one range (with retries), writes the result into the shared
+    // counters. Pulled out into a lambda because ranges are no longer fixed
+    // up front: a worker may get either its "own" chunk or a half stolen by
+    // ChunkQueue from someone else's — the download logic is the same either way.
+    auto downloadOneRange = [&](const ChunkRange& range) {
+        HttpRequest chunkRequest;
+        chunkRequest.url = url;
+        chunkRequest.headers["Range"] =
+            "bytes=" + std::to_string(range.start) + "-" + std::to_string(range.end - 1);
+
+        HttpResponse chunkResponse;
+        bool chunkOk = false;
+        std::int64_t writtenInChunk = 0;
+        const std::int64_t expectedSize = range.size();
+
+        for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
+            if (cancelToken && cancelToken->shouldAbortTransfer()) {
+                break; // no need to retry a pause/cancel
+            }
+
+            writtenInChunk = 0;
+            bool writeFailed = false;
+            WriteCallback onData = [&](const char* data, std::size_t n) {
+                if (rateLimiter) {
+                    rateLimiter->acquire(n);
+                }
+                if (!writer.writeAt(range.start + writtenInChunk, data, n)) {
+                    writeFailed = true;
+                    return false;
+                }
+                writtenInChunk += static_cast<std::int64_t>(n);
+                return true;
+            };
+
+            chunkResponse = httpClient_.perform(chunkRequest, onData, cancelToken);
+            chunkOk = chunkResponse.statusCode == 206 && !writeFailed && writtenInChunk == expectedSize;
+
+            if (chunkOk) {
+                break;
+            }
+            if (attempt < maxRetries) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200 << attempt));
+            }
+        }
+
+        if (!chunkOk) {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            if (firstError.empty()) {
+                firstError = "range error [" + std::to_string(range.start) + ", " +
+                    std::to_string(range.end) + "): HTTP " + std::to_string(chunkResponse.statusCode);
+            }
+            anyFailed = true;
+        } else {
+            bytesDone += writtenInChunk;
+        }
+    };
+
     {
         ThreadPool pool(numWorkers);
-        for (const ChunkSpec& chunk : chunks) {
-            pool.enqueue([&, chunk] {
-                if (anyFailed.load() || (cancelToken && cancelToken->shouldAbortTransfer())) {
-                    if (--remaining == 0) { doneCv.notify_one(); }
-                    return;
+        for (std::size_t w = 0; w < numWorkers; ++w) {
+            pool.enqueue([&] {
+                while (!anyFailed.load() && !(cancelToken && cancelToken->shouldAbortTransfer())) {
+                    // ChunkQueue itself makes sure the queue never holds fewer
+                    // than numWorkers ranges (splitting the biggest remaining
+                    // one in half as needed) — see ChunkQueue.hpp.
+                    const auto rangeOpt = chunkQueue.pop();
+
+                    if (!rangeOpt) {
+                        break; // no ranges left (even splittable ones)
+                    }
+                    downloadOneRange(*rangeOpt);
                 }
 
-                HttpRequest chunkRequest;
-                chunkRequest.url = url;
-                chunkRequest.headers["Range"] = "bytes=" + std::to_string(chunk.offset) + "-" +
-                    std::to_string(chunk.offset + chunk.size - 1);
-
-                HttpResponse chunkResponse;
-                bool chunkOk = false;
-                std::int64_t writtenInChunk = 0;
-
-                for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
-                    if (cancelToken && cancelToken->shouldAbortTransfer()) {
-                        break; // паузу/отмену ретраить не нужно
-                    }
-
-                    writtenInChunk = 0;
-                    bool writeFailed = false;
-                    WriteCallback onData = [&](const char* data, std::size_t n) {
-                        if (rateLimiter) {
-                            rateLimiter->acquire(n);
-                        }
-                        if (!writer.writeAt(chunk.offset + writtenInChunk, data, n)) {
-                            writeFailed = true;
-                            return false;
-                        }
-                        writtenInChunk += static_cast<std::int64_t>(n);
-                        return true;
-                    };
-
-                    chunkResponse = httpClient_.perform(chunkRequest, onData, cancelToken);
-                    chunkOk = chunkResponse.statusCode == 206 && !writeFailed &&
-                              writtenInChunk == chunk.size;
-
-                    if (chunkOk) {
-                        break;
-                    }
-                    if (attempt < maxRetries) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200 << attempt));
-                    }
-                }
-
-                if (!chunkOk) {
-                    std::lock_guard<std::mutex> lock(errorMutex);
-                    if (firstError.empty()) {
-                        firstError = "ошибка чанка [" + std::to_string(chunk.offset) + ", " +
-                            std::to_string(chunk.offset + chunk.size) + "): HTTP " +
-                            std::to_string(chunkResponse.statusCode);
-                    }
-                    anyFailed = true;
-                } else {
-                    bytesDone += writtenInChunk;
-                }
-
+                // The decrement and notify must happen under doneMutex:
+                // otherwise a classic lost wakeup is possible — a worker
+                // manages to zero out remaining and fire notify_one() in
+                // exactly the window between the main thread checking the
+                // predicate (still false) and it actually going to sleep on
+                // the cv, so the notify is lost with no one left to wake it.
+                // Under TSan this window widens, from the instrumentation
+                // overhead, by just enough to make the race observable
+                // (hence the hang happening exactly there and only there,
+                // with no race reported — this is not a data race but an
+                // ordering/synchronization bug).
+                std::lock_guard<std::mutex> doneLock(doneMutex);
                 if (--remaining == 0) { doneCv.notify_one(); }
             });
         }
 
         std::unique_lock<std::mutex> lock(doneMutex);
         doneCv.wait(lock, [&] { return remaining.load() == 0; });
-    } // ~ThreadPool() уже присоединил все потоки
+    } // ~ThreadPool() has already joined all threads
 
     if (anyFailed) {
-        result.error = (cancelToken && cancelToken->isCancelled()) ? "загрузка отменена"
-                      : (cancelToken && cancelToken->isPaused())   ? "загрузка приостановлена"
+        result.error = (cancelToken && cancelToken->isCancelled()) ? "download cancelled"
+                      : (cancelToken && cancelToken->isPaused())   ? "download paused"
                                                                     : firstError;
         return result;
     }
@@ -296,7 +318,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
     DownloadResult result;
 
     if (chunkSize <= 0 || numWorkers == 0) {
-        result.error = "chunkSize и numWorkers должны быть положительными";
+        result.error = "chunkSize and numWorkers must be positive";
         return result;
     }
 
@@ -304,7 +326,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
     DownloadMeta meta;
     bool resuming = false;
 
-    // Пытаемся продолжить существующую закачку.
+    // Try to resume an existing download.
     if (MetaFile::load(metaPath, meta) && meta.url == url && meta.chunkSize == chunkSize
         && meta.totalSize > 0) {
         HttpRequest probeRequest;
@@ -318,9 +340,9 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         WriteCallback discard = [](const char*, std::size_t) { return true; };
         const HttpResponse probe = httpClient_.perform(probeRequest, discard, cancelToken);
 
-        // 206 + тот же размер = файл на сервере не менялся, докачиваем.
-        // 200 (If-Range не совпал) или другой размер = файл сменился —
-        // начинаем заново (meta ниже будет пересоздан).
+        // 206 + the same size = the file on the server hasn't changed, resume.
+        // 200 (If-Range didn't match) or a different size = the file changed —
+        // start over (meta is recreated below).
         resuming = probe.statusCode == 206 && probe.contentRangeTotal == meta.totalSize;
     }
 
@@ -333,7 +355,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
 
         if (probe.statusCode != 206 || probe.contentRangeTotal <= 0) {
             MetaFile::remove(metaPath);
-            return downloadToFile(url, outputPath); // сервер вообще не поддерживает Range
+            return downloadToFile(url, outputPath); // server doesn't support Range at all
         }
 
         meta = DownloadMeta{};
@@ -348,16 +370,16 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         meta.chunkDone.assign(numChunks, false);
 
         if (!FileWriter::preallocate(outputPath, meta.totalSize)) {
-            result.error = "не удалось преаллоцировать файл: " + outputPath;
+            result.error = "failed to preallocate the file: " + outputPath;
             return result;
         }
         if (!MetaFile::save(metaPath, meta)) {
-            result.error = "не удалось сохранить метафайл: " + metaPath;
+            result.error = "failed to save the meta file: " + metaPath;
             return result;
         }
     }
 
-    // Собираем список недостающих чанков + считаем уже готовые байты.
+    // Build the list of missing chunks + count the bytes already done.
     std::vector<ChunkSpec> pending;
     std::atomic<std::int64_t> bytesDone{0};
     for (std::size_t i = 0; i < meta.chunkDone.size(); ++i) {
@@ -387,7 +409,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
     std::mutex errorMutex;
     std::string firstError;
 
-    std::mutex metaMutex; // защищает meta.chunkDone + сохранение метафайла
+    std::mutex metaMutex; // protects meta.chunkDone + saving the meta file
 
     std::atomic<std::size_t> remaining{pending.size()};
     std::mutex doneMutex;
@@ -398,6 +420,10 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         for (const ChunkSpec& chunk : pending) {
             pool.enqueue([&, chunk] {
                 if (anyFailed.load() || (cancelToken && cancelToken->shouldAbortTransfer())) {
+                    // See the comment at the equivalent spot in downloadParallel:
+                    // the decrement + notify must happen under doneMutex,
+                    // otherwise a lost wakeup.
+                    std::lock_guard<std::mutex> doneLock(doneMutex);
                     if (--remaining == 0) { doneCv.notify_one(); }
                     return;
                 }
@@ -413,7 +439,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
 
                 for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
                     if (cancelToken && cancelToken->shouldAbortTransfer()) {
-                        break; // паузу/отмену ретраить не нужно
+                        break; // no need to retry a pause/cancel
                     }
 
                     writtenInChunk = 0;
@@ -445,15 +471,15 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
                 if (!chunkOk) {
                     std::lock_guard<std::mutex> lock(errorMutex);
                     if (firstError.empty()) {
-                        firstError = "ошибка чанка [" + std::to_string(chunk.offset) + ", " +
+                        firstError = "chunk error [" + std::to_string(chunk.offset) + ", " +
                             std::to_string(chunk.offset + chunk.size) + "): HTTP " +
                             std::to_string(chunkResponse.statusCode);
                     }
                     anyFailed = true;
                 } else {
                     bytesDone += writtenInChunk;
-                    // Отмечаем чанк готовым и сохраняем метафайл — так при
-                    // обрыве посреди закачки прогресс не теряется.
+                    // Mark the chunk done and save the meta file — so progress
+                    // isn't lost if the download is interrupted partway through.
                     std::lock_guard<std::mutex> lock(metaMutex);
                     const std::size_t idx =
                         static_cast<std::size_t>(chunk.offset / meta.chunkSize);
@@ -461,7 +487,10 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
                     MetaFile::save(MetaFile::pathFor(outputPath), meta);
                 }
 
-                if (--remaining == 0) { doneCv.notify_one(); }
+                {
+                    std::lock_guard<std::mutex> doneLock(doneMutex);
+                    if (--remaining == 0) { doneCv.notify_one(); }
+                }
             });
         }
 
@@ -470,16 +499,16 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
     }
 
     if (anyFailed) {
-        // Метафайл уже отражает то, что реально докачано — следующий вызов
-        // downloadResumable() продолжит именно с этого места.
+        // The meta file already reflects what's actually been downloaded —
+        // the next downloadResumable() call will continue from exactly here.
         result.bytesWritten = bytesDone.load();
-        result.error = (cancelToken && cancelToken->isCancelled()) ? "загрузка отменена"
-                      : (cancelToken && cancelToken->isPaused())   ? "загрузка приостановлена"
+        result.error = (cancelToken && cancelToken->isCancelled()) ? "download cancelled"
+                      : (cancelToken && cancelToken->isPaused())   ? "download paused"
                                                                     : firstError;
         return result;
     }
 
-    MetaFile::remove(metaPath); // всё скачано — метафайл больше не нужен
+    MetaFile::remove(metaPath); // everything downloaded — the meta file is no longer needed
     result.success = true;
     result.bytesWritten = bytesDone.load();
     result.response.statusCode = 206;

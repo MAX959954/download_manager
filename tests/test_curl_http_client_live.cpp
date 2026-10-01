@@ -1,5 +1,5 @@
-// Интеграционный тест: настоящий CurlHttpClient (после рефакторинга на общий
-// detail::applyHeaderField) против живого сервера. Требует интернет.
+// Integration test: the real CurlHttpClient (after refactoring onto the
+// shared detail::applyHeaderField) against a live server. Requires internet.
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -29,7 +29,7 @@ int main() {
     assert(response.contentRangeTotal == 13);
     assert(response.acceptRanges);
 
-    // И полный Downloader::downloadResumable поверх настоящего CurlHttpClient с SHA-256.
+    // And the full Downloader::downloadResumable on top of the real CurlHttpClient with SHA-256.
     dlm::Downloader downloader(client);
     const std::string outputPath = "test_curl_live_output.tmp";
     const dlm::DownloadResult result = downloader.downloadResumable(

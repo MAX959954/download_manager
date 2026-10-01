@@ -17,12 +17,12 @@ std::string hashString(const std::string& s) {
 } // namespace
 
 int main() {
-    // Эталонные значения SHA-256 из спецификации FIPS 180-4 / общеизвестные тестовые векторы.
+    // Reference SHA-256 values from the FIPS 180-4 spec / well-known test vectors.
     assert(hashString("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     assert(hashString("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 
-    // Длинное сообщение (больше одного 64-байтового блока) — проверяет путь
-    // с несколькими update() подряд и паддинг через границу блока.
+    // A long message (more than one 64-byte block) — exercises the path
+    // with several consecutive update() calls and padding across a block boundary.
     {
         dlm::Sha256 h;
         const std::string part(100, 'x');
@@ -30,11 +30,11 @@ int main() {
         h.update(part.data(), part.size());
         const std::string digest = h.hexDigest();
         assert(digest.size() == 64);
-        // Должно совпасть с хэшем от той же строки, посчитанным за один update().
+        // Must match the hash of the same string computed in a single update() call.
         assert(digest == hashString(part + part));
     }
 
-    // sha256File: считаем хэш реального файла и сверяем с hashString тех же байт.
+    // sha256File: compute the hash of a real file and compare it with hashString of the same bytes.
     {
         const std::string path = "test_sha256_file.tmp";
         const std::string content = "hello, sha256 file test!";
@@ -49,7 +49,7 @@ int main() {
         std::remove(path.c_str());
     }
 
-    // Несуществующий файл — ok должен стать false.
+    // Non-existent file — ok must become false.
     {
         bool ok = true;
         dlm::sha256File("no_such_file_12345.tmp", ok);
