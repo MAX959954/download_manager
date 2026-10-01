@@ -1,4 +1,5 @@
 #include "dlm/Downloader.hpp"
+#include "dlm/ChunkQueue.hpp"
 #include "dlm/FileWriter.hpp"
 #include "dlm/MetaFile.hpp"
 #include "dlm/Sha256.hpp"
@@ -183,80 +184,89 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
         return result;
     }
 
-    std::vector<ChunkSpec> chunks;
-    for (std::int64_t offset = 0; offset < totalSize; offset += chunkSize) {
-        chunks.push_back({offset, std::min(chunkSize, totalSize - offset)});
-    }
-
     FileWriter writer(outputPath);
+    ChunkQueue chunkQueue(totalSize, chunkSize, numWorkers);
+
     std::atomic<std::int64_t> bytesDone{0};
     std::atomic<bool> anyFailed{false};
     std::mutex errorMutex;
     std::string firstError;
 
-    std::atomic<std::size_t> remaining{chunks.size()};
+    std::atomic<std::size_t> remaining{numWorkers};
     std::mutex doneMutex;
     std::condition_variable doneCv;
 
+    // Качает один диапазон (с ретраями), пишет результат в общие счётчики.
+    // Вынесено в лямбду, потому что теперь диапазоны не фиксированы заранее:
+    // воркер может получить как "родной" чанк, так и украденную ChunkQueue
+    // половину чужого — логика скачивания одна и та же в обоих случаях.
+    auto downloadOneRange = [&](const ChunkRange& range) {
+        HttpRequest chunkRequest;
+        chunkRequest.url = url;
+        chunkRequest.headers["Range"] =
+            "bytes=" + std::to_string(range.start) + "-" + std::to_string(range.end - 1);
+
+        HttpResponse chunkResponse;
+        bool chunkOk = false;
+        std::int64_t writtenInChunk = 0;
+        const std::int64_t expectedSize = range.size();
+
+        for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
+            if (cancelToken && cancelToken->shouldAbortTransfer()) {
+                break; // паузу/отмену ретраить не нужно
+            }
+
+            writtenInChunk = 0;
+            bool writeFailed = false;
+            WriteCallback onData = [&](const char* data, std::size_t n) {
+                if (rateLimiter) {
+                    rateLimiter->acquire(n);
+                }
+                if (!writer.writeAt(range.start + writtenInChunk, data, n)) {
+                    writeFailed = true;
+                    return false;
+                }
+                writtenInChunk += static_cast<std::int64_t>(n);
+                return true;
+            };
+
+            chunkResponse = httpClient_.perform(chunkRequest, onData, cancelToken);
+            chunkOk = chunkResponse.statusCode == 206 && !writeFailed && writtenInChunk == expectedSize;
+
+            if (chunkOk) {
+                break;
+            }
+            if (attempt < maxRetries) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200 << attempt));
+            }
+        }
+
+        if (!chunkOk) {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            if (firstError.empty()) {
+                firstError = "ошибка диапазона [" + std::to_string(range.start) + ", " +
+                    std::to_string(range.end) + "): HTTP " + std::to_string(chunkResponse.statusCode);
+            }
+            anyFailed = true;
+        } else {
+            bytesDone += writtenInChunk;
+        }
+    };
+
     {
         ThreadPool pool(numWorkers);
-        for (const ChunkSpec& chunk : chunks) {
-            pool.enqueue([&, chunk] {
-                if (anyFailed.load() || (cancelToken && cancelToken->shouldAbortTransfer())) {
-                    if (--remaining == 0) { doneCv.notify_one(); }
-                    return;
-                }
+        for (std::size_t w = 0; w < numWorkers; ++w) {
+            pool.enqueue([&] {
+                while (!anyFailed.load() && !(cancelToken && cancelToken->shouldAbortTransfer())) {
+                    // ChunkQueue сама следит, чтобы диапазонов в очереди было
+                    // не меньше numWorkers (деля самый большой из оставшихся
+                    // пополам при необходимости) — см. ChunkQueue.hpp.
+                    const auto rangeOpt = chunkQueue.pop();
 
-                HttpRequest chunkRequest;
-                chunkRequest.url = url;
-                chunkRequest.headers["Range"] = "bytes=" + std::to_string(chunk.offset) + "-" +
-                    std::to_string(chunk.offset + chunk.size - 1);
-
-                HttpResponse chunkResponse;
-                bool chunkOk = false;
-                std::int64_t writtenInChunk = 0;
-
-                for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
-                    if (cancelToken && cancelToken->shouldAbortTransfer()) {
-                        break; // паузу/отмену ретраить не нужно
+                    if (!rangeOpt) {
+                        break; // диапазонов (даже дробимых) больше не осталось
                     }
-
-                    writtenInChunk = 0;
-                    bool writeFailed = false;
-                    WriteCallback onData = [&](const char* data, std::size_t n) {
-                        if (rateLimiter) {
-                            rateLimiter->acquire(n);
-                        }
-                        if (!writer.writeAt(chunk.offset + writtenInChunk, data, n)) {
-                            writeFailed = true;
-                            return false;
-                        }
-                        writtenInChunk += static_cast<std::int64_t>(n);
-                        return true;
-                    };
-
-                    chunkResponse = httpClient_.perform(chunkRequest, onData, cancelToken);
-                    chunkOk = chunkResponse.statusCode == 206 && !writeFailed &&
-                              writtenInChunk == chunk.size;
-
-                    if (chunkOk) {
-                        break;
-                    }
-                    if (attempt < maxRetries) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200 << attempt));
-                    }
-                }
-
-                if (!chunkOk) {
-                    std::lock_guard<std::mutex> lock(errorMutex);
-                    if (firstError.empty()) {
-                        firstError = "ошибка чанка [" + std::to_string(chunk.offset) + ", " +
-                            std::to_string(chunk.offset + chunk.size) + "): HTTP " +
-                            std::to_string(chunkResponse.statusCode);
-                    }
-                    anyFailed = true;
-                } else {
-                    bytesDone += writtenInChunk;
+                    downloadOneRange(*rangeOpt);
                 }
 
                 if (--remaining == 0) { doneCv.notify_one(); }

@@ -26,3 +26,10 @@ add_subdirectory(cli)
 
 enable_testing()
 add_subdirectory(tests)
+
+# Бенчмарк (1 vs 4 vs 8 потоков x размеры чанка) — отдельный ручной таргет,
+# не часть обычной сборки/ctest. См. benchmarks/README через bench_downloader.cpp.
+option(DLM_BUILD_BENCHMARKS "Build benchmark tools (bench_downloader)" OFF)
+if (DLM_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()

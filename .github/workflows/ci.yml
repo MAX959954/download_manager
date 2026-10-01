@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: build & test (Debug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev libssl-dev pkg-config
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build
+
+      # "_live" тесты реально ходят в интернет (GitHub) — исключаем их здесь,
+      # чтобы сборка не краснела из-за сети; они гоняются отдельным,
+      # не блокирующим джобом ниже.
+      - name: Run tests (excluding live network tests)
+        run: ctest --test-dir build --output-on-failure --timeout 300 -LE live
+
+  sanitizers:
+    name: sanitizers (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev libssl-dev pkg-config
+
+      # ASan собираем вместе с UBSan (стандартная связка), TSan — отдельно:
+      # ASan и TSan нельзя линковать в один бинарник одновременно.
+      - name: Configure with -fsanitize=${{ matrix.sanitizer }}
+        run: |
+          FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer -g -O1"
+          if [ "${{ matrix.sanitizer }}" = "address" ]; then
+            FLAGS="$FLAGS -fsanitize=undefined"
+          fi
+          cmake -S . -B build-${{ matrix.sanitizer }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="$FLAGS" \
+            -DCMAKE_EXE_LINKER_FLAGS="$FLAGS"
+
+      - name: Build
+        run: cmake --build build-${{ matrix.sanitizer }}
+
+      - name: Run tests under sanitizer (excluding live network tests)
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ctest --test-dir build-${{ matrix.sanitizer }} --output-on-failure --timeout 300 -LE live
+
+  live-network-tests:
+    name: live network tests (non-blocking)
+    runs-on: ubuntu-latest
+    # Зависят от реального интернета (raw.githubusercontent.com) — не должны
+    # ронять CI из-за временных проблем с сетью у GitHub-раннера, поэтому
+    # вынесены в отдельный необязательный джоб.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev libssl-dev pkg-config
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run live network tests
+        run: ctest --test-dir build --output-on-failure --timeout 300 -L live
