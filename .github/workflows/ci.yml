@@ -22,9 +22,9 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      # "_live" тесты реально ходят в интернет (GitHub) — исключаем их здесь,
-      # чтобы сборка не краснела из-за сети; они гоняются отдельным,
-      # не блокирующим джобом ниже.
+      # The "_live" tests make real network calls (to GitHub) — excluded
+      # here so the build doesn't fail because of network flakiness; they
+      # run in a separate, non-blocking job below.
       - name: Run tests (excluding live network tests)
         run: ctest --test-dir build --output-on-failure --timeout 300 -LE live
 
@@ -43,8 +43,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev libssl-dev pkg-config
 
-      # ASan собираем вместе с UBSan (стандартная связка), TSan — отдельно:
-      # ASan и TSan нельзя линковать в один бинарник одновременно.
+      # ASan is built together with UBSan (the standard combo), TSan on its
+      # own: ASan and TSan can't be linked into the same binary at once.
       - name: Configure with -fsanitize=${{ matrix.sanitizer }}
         run: |
           FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer -g -O1"
@@ -69,9 +69,9 @@ jobs:
   live-network-tests:
     name: live network tests (non-blocking)
     runs-on: ubuntu-latest
-    # Зависят от реального интернета (raw.githubusercontent.com) — не должны
-    # ронять CI из-за временных проблем с сетью у GitHub-раннера, поэтому
-    # вынесены в отдельный необязательный джоб.
+    # Depends on real internet access (raw.githubusercontent.com) — must
+    # not fail the CI run over transient network issues on the GitHub
+    # runner, so it's split out into a separate, optional job.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

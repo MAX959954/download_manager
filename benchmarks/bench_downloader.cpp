@@ -1,13 +1,13 @@
-// Бенчмарк: 1 vs 4 vs 8 потоков x несколько размеров чанка.
+// Benchmark: 1 vs 4 vs 8 threads x several chunk sizes.
 //
-// Качает один и тот же файл через Downloader::downloadParallel поверх
-// SocketHttpClient (собственный HTTP-клиент на сырых сокетах, Этап 8) с
-// throttled_server.py на localhost — сервер искусственно режет скорость
-// КАЖДОГО TCP-соединения, поэтому суммарная скорость растёт с числом
-// параллельных воркеров почти линейно, пока не упрётся в потолок.
+// Downloads the same file via Downloader::downloadParallel on top of
+// SocketHttpClient (our own HTTP client over raw sockets, Stage 8) against
+// throttled_server.py on localhost — the server artificially caps the
+// throughput of EACH TCP connection, so aggregate throughput scales with
+// the number of parallel workers almost linearly until it hits a ceiling.
 //
-// Это не unit-тест и не часть ctest — собирается только при
-// -DDLM_BUILD_BENCHMARKS=ON, запускается руками:
+// This is not a unit test and not part of ctest — it's only built with
+// -DDLM_BUILD_BENCHMARKS=ON and run manually:
 //   python3 benchmarks/throttled_server.py 8787 &
 //   ./build/.../bench_downloader http://127.0.0.1:8787/file benchmarks/results.csv 3
 

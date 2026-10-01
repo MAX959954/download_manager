@@ -10,8 +10,8 @@ namespace dlm {
 
 namespace {
 
-// curl_global_init/cleanup не потокобезопасны и должны вызываться ровно
-// один раз за процесс — считаем живые экземпляры CurlHttpClient.
+// curl_global_init/cleanup are not thread-safe and must be called exactly
+// once per process — we count live CurlHttpClient instances.
 std::mutex g_initMutex;
 int g_initCount = 0;
 
@@ -35,13 +35,13 @@ size_t writeThunk(char* ptr, size_t size, size_t nmemb, void* userdata) {
     if (!*callback) {
         return bytes;
     }
-    // Возврат значения, отличного от bytes, сигналит libcurl прервать трансфер.
+    // Returning a value other than bytes signals libcurl to abort the transfer.
     return (*callback)(ptr, bytes) ? bytes : 0;
 }
 
 int progressThunk(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
     const auto* token = static_cast<const CancelToken*>(userdata);
-    // Ненулевой возврат — сигнал libcurl немедленно прервать трансфер.
+    // A non-zero return is a signal for libcurl to abort the transfer immediately.
     return (token && token->shouldAbortTransfer()) ? 1 : 0;
 }
 
@@ -69,7 +69,7 @@ HttpResponse CurlHttpClient::perform(const HttpRequest& request, const WriteCall
 
     CURL* curl = curl_easy_init();
     if (!curl) {
-        return response; // statusCode остаётся 0 — сигнал ошибки для вызывающего кода
+        return response; // statusCode stays 0 — an error signal for the caller
     }
 
     curl_slist* headerList = nullptr;
@@ -93,7 +93,7 @@ HttpResponse CurlHttpClient::perform(const HttpRequest& request, const WriteCall
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeThunk);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &onData);
 
-    // Пауза/отмена: включаем progress-колбэк и даём ему указатель на токен.
+    // Pause/cancel: enable the progress callback and hand it a pointer to the token.
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressThunk);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancelToken);
@@ -105,8 +105,8 @@ HttpResponse CurlHttpClient::perform(const HttpRequest& request, const WriteCall
     response.statusCode = statusCode;
 
     if (curlResult == CURLE_ABORTED_BY_CALLBACK) {
-        // Трансфер прерван нами самими (пауза/отмена) — это не HTTP-ответ,
-        // явно обнуляем statusCode, чтобы Downloader не принял его за успех.
+        // The transfer was aborted by us (pause/cancel) — this is not an HTTP
+        // response, so explicitly zero statusCode so Downloader doesn't treat it as success.
         response.statusCode = 0;
     }
 

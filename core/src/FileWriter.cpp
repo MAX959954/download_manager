@@ -12,7 +12,7 @@ bool FileWriter::preallocate(const std::string& path, std::int64_t totalSize) {
         return false;
     }
 
-    // Создаём файл, если его ещё нет (resize_file не создаёт файлы сам).
+    // Create the file if it doesn't exist yet (resize_file doesn't create files itself).
     {
         std::ofstream create(path, std::ios::binary | std::ios::app);
         if (!create) {

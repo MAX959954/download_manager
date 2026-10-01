@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Строит benchmark.png из benchmarks/results.csv (см. bench_downloader.cpp
-и throttled_server.py — как получены сырые данные).
+"""Builds benchmark.png from benchmarks/results.csv (see bench_downloader.cpp
+and throttled_server.py for how the raw data was produced).
 
-Запуск: python3 benchmarks/plot_results.py
+Run: python3 benchmarks/plot_results.py
 """
 import csv
 import statistics
@@ -15,8 +15,8 @@ HERE = Path(__file__).parent
 CSV_PATH = HERE / "results.csv"
 OUT_PATH = HERE / "benchmark.png"
 
-# Категориальная палитра (3 первых слота проверенной палитры — валидны
-# по CVD/контрасту для всех пар, см. skill dataviz/references/palette.md).
+# Categorical palette (first 3 slots of the validated palette — verified
+# for CVD/contrast across all pairs, see skill dataviz/references/palette.md).
 COLORS = {
     1: "#2a78d6",  # blue
     4: "#eb6834",  # orange
@@ -31,7 +31,7 @@ SURFACE = "#fcfcfb"
 def main():
     rows = list(csv.DictReader(CSV_PATH.open()))
 
-    # median throughput по (chunk_size, threads)
+    # median throughput by (chunk_size, threads)
     grouped = defaultdict(list)
     for row in rows:
         key = (int(row["chunk_size_bytes"]), int(row["threads"]))
@@ -60,7 +60,7 @@ def main():
             medians,
             width=bar_width * 0.9,
             color=COLORS.get(threads, "#888888"),
-            label=f"{threads} поток{'' if threads == 1 else ('а' if threads == 4 else 'ов')}",
+            label=f"{threads} thread{'' if threads == 1 else 's'}",
             zorder=3,
         )
         for rect, value in zip(bars, medians):
@@ -76,11 +76,11 @@ def main():
 
     ax.set_xticks(list(x))
     ax.set_xticklabels([chunk_label(cs) for cs in chunk_sizes], color=TEXT_PRIMARY)
-    ax.set_xlabel("Размер чанка", color=TEXT_PRIMARY)
-    ax.set_ylabel("Скорость, MB/s (медиана из 3 прогонов)", color=TEXT_PRIMARY)
+    ax.set_xlabel("Chunk size", color=TEXT_PRIMARY)
+    ax.set_ylabel("Throughput, MB/s (median of 3 runs)", color=TEXT_PRIMARY)
     ax.set_title(
-        "Параллельные закачки vs число потоков (после adaptive chunking)\n"
-        "(файл 20 MB, сервер режет каждое соединение до 1 MB/s)",
+        "Parallel downloads vs thread count (after adaptive chunking)\n"
+        "(20 MB file, server caps each connection at 1 MB/s)",
         color=TEXT_PRIMARY,
         fontsize=12,
     )

@@ -1,7 +1,8 @@
-// Контрольный замер СТАРОГО алгоритма (статическая раздача: один таск на
-// один фиксированный чанк, без дробления) — чтобы честно показать разницу
-// до/после ChunkQueue, а не просто посчитать на бумаге. Это НЕ часть
-// проекта, используется только один раз для README.
+// Baseline measurement of the OLD algorithm (static partitioning: one task
+// per fixed chunk, no splitting) — to honestly show the before/after
+// difference from ChunkQueue instead of just estimating it on paper. This
+// is NOT part of the project, used only once to produce numbers for the
+// README.
 #include <dlm/CancelToken.hpp>
 #include <dlm/FileWriter.hpp>
 #include <dlm/RateLimiter.hpp>
@@ -18,8 +19,8 @@
 #include <thread>
 #include <vector>
 
-// Копия ThreadPool-free static-partition логики, как было до ChunkQueue:
-// ровно один HTTP-запрос на чанк, без адаптивного дробления.
+// Copy of the ThreadPool-free static-partition logic as it was before
+// ChunkQueue: exactly one HTTP request per chunk, no adaptive splitting.
 static double runOldStatic(dlm::IHttpClient& client, const std::string& url, const std::string& outputPath,
                             std::int64_t chunkSize, std::size_t numWorkers, std::int64_t totalSize) {
     dlm::FileWriter::preallocate(outputPath, totalSize);
@@ -37,10 +38,10 @@ static double runOldStatic(dlm::IHttpClient& client, const std::string& url, con
 
     const auto t0 = std::chrono::steady_clock::now();
 
-    // Эмулируем "один таск на чанк, пул воркеров" так же, как было в
-    // исходном коде: чанков МЕНЬШЕ, чем потоков, поэтому лишние потоки
-    // просто не создаём вовсе (ровно как это и происходило бы в старом
-    // ThreadPool-варианте — излишние воркеры не получали ни одной задачи).
+    // Emulate "one task per chunk, worker pool" the same way the original
+    // code did: when there are FEWER chunks than threads, we simply don't
+    // create the extra threads at all (exactly as would have happened in
+    // the old ThreadPool variant — surplus workers never received a task).
     const std::size_t activeWorkers = std::min(numWorkers, chunks.size());
     std::vector<std::thread> workers;
     for (std::size_t w = 0; w < activeWorkers; ++w) {

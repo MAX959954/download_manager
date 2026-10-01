@@ -10,11 +10,11 @@ bool consumeChunkedBytes(std::string& buffer, const WriteCallback& onData, bool&
     for (;;) {
         const auto lineEnd = buffer.find("\r\n");
         if (lineEnd == std::string::npos) {
-            return true; // ждём данных для строки размера чанка
+            return true; // waiting for more data to complete the chunk-size line
         }
 
         std::string sizeLine = buffer.substr(0, lineEnd);
-        const auto semi = sizeLine.find(';'); // отбрасываем chunk-extension, если есть
+        const auto semi = sizeLine.find(';'); // discard the chunk-extension, if present
         if (semi != std::string::npos) {
             sizeLine = sizeLine.substr(0, semi);
         }
@@ -25,14 +25,14 @@ bool consumeChunkedBytes(std::string& buffer, const WriteCallback& onData, bool&
         char* end = nullptr;
         const unsigned long chunkSize = std::strtoul(sizeLine.c_str(), &end, 16);
         if (end == sizeLine.c_str()) {
-            return false; // не hex-число
+            return false; // not a hex number
         }
 
         if (chunkSize == 0) {
-            // Завершающий чанк — ждём пустую строку, закрывающую трейлеры.
+            // Terminating chunk — wait for the blank line that closes the trailers.
             const auto trailerEnd = buffer.find("\r\n\r\n", lineEnd);
             if (trailerEnd == std::string::npos) {
-                return true; // трейлеры ещё не докачались полностью
+                return true; // trailers haven't fully arrived yet
             }
             buffer.erase(0, trailerEnd + 4);
             finished = true;
@@ -42,10 +42,10 @@ bool consumeChunkedBytes(std::string& buffer, const WriteCallback& onData, bool&
         const std::size_t dataStart = lineEnd + 2;
         const std::size_t dataEnd = dataStart + static_cast<std::size_t>(chunkSize);
         if (buffer.size() < dataEnd + 2) {
-            return true; // данные этого чанка ещё не пришли целиком
+            return true; // this chunk's data hasn't fully arrived yet
         }
         if (buffer[dataEnd] != '\r' || buffer[dataEnd + 1] != '\n') {
-            return false; // нет завершающего CRLF после данных чанка — битый формат
+            return false; // no terminating CRLF after the chunk data — malformed format
         }
 
         if (!onData(buffer.data() + dataStart, static_cast<std::size_t>(chunkSize))) {
@@ -53,7 +53,7 @@ bool consumeChunkedBytes(std::string& buffer, const WriteCallback& onData, bool&
         }
 
         buffer.erase(0, dataEnd + 2);
-        // Не выходим из цикла — вдруг в буфере уже лежит целиком следующий чанк.
+        // Don't exit the loop — the next chunk might already be fully in the buffer.
     }
 }
 

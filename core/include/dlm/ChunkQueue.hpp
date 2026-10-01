@@ -10,41 +10,42 @@ namespace dlm {
 
 struct ChunkRange {
     std::int64_t start;
-    std::int64_t end; // не включая
+    std::int64_t end; // exclusive
 
     std::int64_t size() const { return end - start; }
 };
 
-// Потокобезопасная очередь диапазонов с адаптивным дроблением ("work
-// stealing" для HTTP-докачки).
+// A thread-safe queue of ranges with adaptive splitting ("work stealing"
+// for HTTP resumable downloads).
 //
-// Статическое разбиение на N чанков фиксированного размера ломается, когда
-// чанков меньше, чем воркеров (файл 20 MB, chunkSize 4 MB -> всего 5 чанков,
-// и 3 воркера из 8 гарантированно простаивают всю закачку — см. бенчмарк в
-// benchmarks/). pop() решает это прямо в момент выдачи работы: если в
-// очереди осталось меньше диапазонов, чем всего воркеров — самый большой из
-// оставшихся диапазонов делится пополам, и так до тех пор, пока диапазонов
-// не станет достаточно (или пока дробить дальше уже невыгодно).
+// Statically splitting into N fixed-size chunks breaks down when there are
+// fewer chunks than workers (a 20 MB file, 4 MB chunkSize -> only 5 chunks
+// total, and 3 of 8 workers are guaranteed to sit idle for the whole
+// download — see the benchmark in benchmarks/). pop() solves this right at
+// the moment work is handed out: if the queue has fewer ranges left than
+// there are workers in total, the largest remaining range is split in half,
+// and so on until there are enough ranges (or splitting further stops
+// being worthwhile).
 //
-// Важно: порог — это общее число воркеров (numWorkers_), ПОСТОЯННОЕ и
-// известное заранее, а не "сколько воркеров простаивают прямо сейчас".
-// Первая версия именно так и считала (атомарный счётчик "занят/свободен"),
-// и это было ошибкой: воркеры разбирают первые N чанков за микросекунды —
-// быстрее, чем остальные успевают вообще дойти до вызова pop() — поэтому
-// "живой" счётчик почти никогда не успевал увидеть, что кому-то не хватило
-// работы, и дробление не срабатывало ни разу. Раз мы заранее знаем, сколько
-// воркеров всего будет работать, достаточно детерминированно поддерживать
-// в очереди не меньше queue.size() >= numWorkers диапазонов на каждый pop(),
-// без всякой гонки.
+// Important: the threshold is the total number of workers (numWorkers_),
+// which is CONSTANT and known up front, not "how many workers are idle
+// right now." The first version counted it that way (an atomic
+// busy/free counter), and that was a bug: workers pick up the first N
+// chunks in microseconds — faster than the rest even manage to reach the
+// pop() call — so the "live" counter almost never got to see that someone
+// was short on work, and splitting never kicked in. Since we know in
+// advance how many workers will ever run, it's enough to deterministically
+// keep queue.size() >= numWorkers ranges in the queue on every pop(), with
+// no race at all.
 //
-// Это не классический in-flight work-stealing (мы не прерываем уже идущий
-// Range-запрос — TCP-соединение нельзя обрезать посередине без разрыва и
-// переоткрытия): если диапазон уже выдан воркеру, он "невидим" для этой
-// очереди и достелить из него ничего нельзя. Поэтому выигрыш ограничен
-// тем, что можно успеть раздробить ДО выдачи — отсюда остаточный разбаланс,
-// когда исходный чанк намного крупнее "справедливой доли" на воркера
-// (см. README/бенчмарк: разница между "убрали явный провал" и "идеальная
-// линейность").
+// This isn't classic in-flight work stealing (we don't interrupt a Range
+// request already in progress — a TCP connection can't be cut mid-stream
+// without tearing down and reopening it): once a range has been handed to
+// a worker, it's "invisible" to this queue and nothing can be carved out
+// of it. So the gain is limited to what can be split BEFORE handout —
+// hence the residual imbalance when the original chunk is much bigger than
+// a worker's "fair share" (see the README/benchmark for the difference
+// between "removed the obvious cliff" and "perfect linearity").
 class ChunkQueue {
 public:
     ChunkQueue(std::int64_t totalSize, std::int64_t chunkSize, std::size_t numWorkers,
@@ -67,7 +68,7 @@ public:
                 [](const ChunkRange& a, const ChunkRange& b) { return a.size() < b.size(); });
 
             if (biggestIt->size() <= minSplitSize_ * 2) {
-                break; // дальше дробить невыгодно — накладные расходы на лишний HTTP-запрос съедят выигрыш
+                break; // not worth splitting further — the overhead of an extra HTTP request would eat the gain
             }
 
             const std::int64_t mid = biggestIt->start + biggestIt->size() / 2;

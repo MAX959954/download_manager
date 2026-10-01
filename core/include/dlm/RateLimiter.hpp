@@ -8,11 +8,11 @@
 
 namespace dlm {
 
-// Простой token bucket: ограничивает суммарную скорость чтения данных до
-// maxBytesPerSecond. Поток, получивший n байт, вызывает acquire(n) и
-// блокируется ровно настолько, насколько нужно, чтобы не превысить лимит.
-// Один RateLimiter можно шарить между всеми воркерами одной (или даже
-// нескольких) закачек — он потокобезопасен.
+// A simple token bucket: caps the overall data read rate at
+// maxBytesPerSecond. A thread that receives n bytes calls acquire(n) and
+// blocks for exactly as long as needed to stay within the limit.
+// A single RateLimiter can be shared between all workers of one (or even
+// several) downloads — it's thread-safe.
 class RateLimiter {
 public:
     explicit RateLimiter(std::int64_t maxBytesPerSecond)
@@ -22,7 +22,7 @@ public:
 
     void acquire(std::size_t bytes) {
         if (maxBytesPerSecond_ <= 0) {
-            return; // 0 или отрицательное значение = лимита нет
+            return; // 0 or a negative value = no limit
         }
 
         std::unique_lock<std::mutex> lock(mutex_);

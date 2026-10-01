@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Простой HTTP-сервер с Range-поддержкой и per-connection throttling —
-нужен только для бенчмарка (benchmarks/bench_downloader.cpp), не часть
-самого download manager'а.
+"""Simple HTTP server with Range support and per-connection throttling —
+needed only for the benchmark (benchmarks/bench_downloader.cpp), not part
+of the download manager itself.
 
-Отдаёт один синтетический файл фиксированного размера и искусственно
-ограничивает скорость отдачи на КАЖДОЕ соединение (а не суммарно на весь
-сервер) — это моделирует типичный сценарий, из-за которого параллельные
-закачки вообще имеют смысл: один реальный сервер/CDN часто режет скорость
-одного TCP-соединения, но параллельные соединения складываются.
+Serves a single synthetic file of fixed size and artificially caps the
+transfer rate on EACH connection (rather than the server's total
+throughput) — this models the typical scenario that makes parallel
+downloads worthwhile in the first place: a real server/CDN often caps the
+rate of a single TCP connection, but parallel connections add up.
 
-Запуск: python3 throttled_server.py [port]
-Переменные окружения:
-  DLM_BENCH_FILE_SIZE  — размер файла в байтах (по умолчанию 20 MiB)
-  DLM_BENCH_RATE_BPS   — лимit на одно соединение, байт/сек (по умолчанию 1 MiB/s)
+Run: python3 throttled_server.py [port]
+Environment variables:
+  DLM_BENCH_FILE_SIZE  — file size in bytes (default 20 MiB)
+  DLM_BENCH_RATE_BPS   — limit per connection, bytes/sec (default 1 MiB/s)
 """
 import http.server
 import os

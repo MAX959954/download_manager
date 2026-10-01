@@ -10,9 +10,9 @@
 
 namespace dlm {
 
-// Простой пул потоков общего назначения: N воркеров разбирают очередь
-// задач std::function<void()>. Используется для скачивания чанков —
-// задача = "скачать чанк i", но сам пул про чанки ничего не знает.
+// A simple general-purpose thread pool: N workers pull tasks off a queue
+// of std::function<void()>. Used for downloading chunks — a task is
+// "download chunk i", but the pool itself knows nothing about chunks.
 class ThreadPool {
 public:
     explicit ThreadPool(std::size_t numThreads);

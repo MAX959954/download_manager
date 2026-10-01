@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""before_after.png — наглядно показывает, что чинит ChunkQueue: сценарий
-"файл 20 MB, размер чанка 10 MB" (изначально всего 2 чанка). Числа для
-"До" — реальный замер старого статического алгоритма (один таск на
-фиксированный чанк, без дробления; см. benchmarks/old_static_bench.cpp,
-не часть продакшен-кода, использован только для этого сравнения). Числа
-для "После" — benchmarks/bench_downloader.cpp (ChunkQueue) из results.csv.
+"""before_after.png — visually demonstrates what ChunkQueue fixes: the
+"20 MB file, 10 MB chunk size" scenario (only 2 chunks initially). The
+"Before" numbers are a real measurement of the old static algorithm (one
+task per fixed chunk, no splitting; see benchmarks/old_static_bench.cpp,
+not part of production code, used only for this comparison). The "After"
+numbers come from benchmarks/bench_downloader.cpp (ChunkQueue) via
+results.csv.
 """
 import matplotlib.pyplot as plt
 
 THREADS = [1, 4, 8]
-BEFORE_MB_S = [1.00, 2.01, 2.01]   # old_static_bench.cpp, медиана из 3 прогонов
-AFTER_MB_S = [1.00, 3.93, 7.16]    # benchmarks/results.csv (chunk=10MB), медиана из 3 прогонов
+BEFORE_MB_S = [1.00, 2.01, 2.01]   # old_static_bench.cpp, median of 3 runs
+AFTER_MB_S = [1.00, 3.93, 7.16]    # benchmarks/results.csv (chunk=10MB), median of 3 runs
 
 TEXT_PRIMARY = "#0b0b0b"
 TEXT_SECONDARY = "#52514e"
 SURFACE = "#fcfcfb"
-COLOR_BEFORE = "#52514e"  # нейтральный серый — "было"
-COLOR_AFTER = "#1baf7a"   # aqua — "стало", акцент
+COLOR_BEFORE = "#52514e"  # neutral gray — "before"
+COLOR_AFTER = "#1baf7a"   # aqua — "after", accent
 
 fig, ax = plt.subplots(figsize=(7, 5), dpi=150)
 fig.patch.set_facecolor(SURFACE)
@@ -26,9 +27,9 @@ x = range(len(THREADS))
 width = 0.32
 
 bars_before = ax.bar([xi - width / 2 for xi in x], BEFORE_MB_S, width=width,
-                      color=COLOR_BEFORE, label="До (статичные чанки)", zorder=3)
+                      color=COLOR_BEFORE, label="Before (static chunks)", zorder=3)
 bars_after = ax.bar([xi + width / 2 for xi in x], AFTER_MB_S, width=width,
-                     color=COLOR_AFTER, label="После (ChunkQueue, адаптивно)", zorder=3)
+                     color=COLOR_AFTER, label="After (ChunkQueue, adaptive)", zorder=3)
 
 for bars in (bars_before, bars_after):
     for rect in bars:
@@ -36,11 +37,11 @@ for bars in (bars_before, bars_after):
                 f"{rect.get_height():.2f}", ha="center", va="bottom", fontsize=9, color=TEXT_SECONDARY)
 
 ax.set_xticks(list(x))
-ax.set_xticklabels([f"{t} поток{'и' if t in (2,3,4) else ('' if t==1 else 'ов')}" for t in THREADS], color=TEXT_PRIMARY)
-ax.set_ylabel("Скорость, MB/s", color=TEXT_PRIMARY)
+ax.set_xticklabels([f"{t} thread{'' if t == 1 else 's'}" for t in THREADS], color=TEXT_PRIMARY)
+ax.set_ylabel("Throughput, MB/s", color=TEXT_PRIMARY)
 ax.set_title(
-    "Эффект ChunkQueue на изначально крупном чанке\n"
-    "(файл 20 MB, chunkSize 10 MB — старт всего с 2 диапазонов)",
+    "Effect of ChunkQueue with a large initial chunk size\n"
+    "(20 MB file, chunkSize 10 MB — starts with only 2 ranges)",
     color=TEXT_PRIMARY, fontsize=12,
 )
 ax.tick_params(colors=TEXT_SECONDARY)

@@ -29,12 +29,11 @@ struct JobInfo {
     DownloadResult result;
 };
 
-// Управляет очередью закачек с ограничением на число одновременно активных.
-// Внутри у каждой закачки по-прежнему свой пул воркеров на чанки
-// (workersPerDownload), но одновременно работать может не больше
-// maxConcurrentDownloads закачек сразу — остальные ждут своей очереди в
-// общем ThreadPool (переиспользуем его же из Этапа 3, отдельная очередь не
-// нужна).
+// Manages a queue of downloads with a cap on how many run at once.
+// Internally, each download still has its own worker pool for chunks
+// (workersPerDownload), but no more than maxConcurrentDownloads downloads
+// can run at the same time — the rest wait their turn in the shared
+// ThreadPool (reusing the one from Stage 3; a separate queue isn't needed).
 class DownloadManager {
 public:
     explicit DownloadManager(IHttpClient& httpClient,
@@ -55,8 +54,8 @@ public:
     JobInfo status(std::uint64_t jobId) const;
     std::vector<JobInfo> allJobs() const;
 
-    // Блокирует вызывающий поток, пока все на данный момент поставленные
-    // задачи не завершатся (успешно, с ошибкой или отменой).
+    // Blocks the calling thread until all tasks enqueued so far have
+    // finished (successfully, with an error, or cancelled).
     void waitAll();
 
 private:
@@ -68,7 +67,7 @@ private:
     void runJob(const std::shared_ptr<Job>& job);
 
     IHttpClient& httpClient_;
-    ThreadPool pool_; // размер = maxConcurrentDownloads
+    ThreadPool pool_; // size = maxConcurrentDownloads
     std::size_t workersPerDownload_;
 
     mutable std::mutex jobsMutex_;

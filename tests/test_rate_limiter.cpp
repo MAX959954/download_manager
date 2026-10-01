@@ -5,21 +5,22 @@
 #include <dlm/RateLimiter.hpp>
 
 int main() {
-    // Лимит 1000 байт/сек. Запрашиваем 3000 байт тремя кусками по 1000 —
-    // первый должен пройти почти сразу (бакет стартует полным), а два
-    // следующих — потребовать суммарно не меньше ~2 секунд ожидания.
+    // Limit of 1000 bytes/sec. Request 3000 bytes in three chunks of 1000 —
+    // the first should go through almost immediately (the bucket starts
+    // full), while the next two should together require at least ~2 seconds
+    // of waiting.
     dlm::RateLimiter limiter(1000);
 
     const auto start = std::chrono::steady_clock::now();
-    limiter.acquire(1000); // из начального запаса токенов — без ожидания
-    limiter.acquire(1000); // токенов не осталось — ждём пополнения
+    limiter.acquire(1000); // from the initial token supply — no waiting
+    limiter.acquire(1000); // no tokens left — wait for refill
     limiter.acquire(1000);
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
     const double elapsedSeconds = std::chrono::duration<double>(elapsed).count();
-    assert(elapsedSeconds > 1.5); // должно было уйти заметное время на ожидание
+    assert(elapsedSeconds > 1.5); // a noticeable amount of time should have been spent waiting
 
-    // Лимит <= 0 означает "без ограничения" — acquire() не должен блокировать.
+    // Limit <= 0 means "unlimited" — acquire() must not block.
     {
         dlm::RateLimiter noLimit(0);
         const auto t0 = std::chrono::steady_clock::now();

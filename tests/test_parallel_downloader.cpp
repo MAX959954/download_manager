@@ -28,13 +28,14 @@ std::string makeBody(std::size_t size) {
 } // namespace
 
 int main() {
-    // Размер не кратен размеру чанка — проверяем и обычные, и последний
-    // (укороченный) чанк, скачанный параллельно несколькими воркерами.
+    // Size is not a multiple of the chunk size — this checks both regular
+    // chunks and the last (shortened) chunk, downloaded in parallel by
+    // multiple workers.
     const std::string body = makeBody(50 * 1000 + 777);
     const std::int64_t chunkSize = 4000;
 
-    // 1) Параллельная загрузка даёт побайтово тот же результат, что и
-    //    обычная (Этап 1).
+    // 1) Parallel download produces a byte-for-byte identical result to the
+    //    regular one (Stage 1).
     {
         dlm_test::FakeHttpClient fakeClientParallel(body, /*acceptRanges=*/true, /*writeChunkSize=*/500);
         dlm::Downloader parallelDownloader(fakeClientParallel);
@@ -50,7 +51,7 @@ int main() {
         std::remove(parallelPath.c_str());
     }
 
-    // 2) Сервер без поддержки Range — фолбэк на downloadToFile.
+    // 2) Server without Range support — falls back to downloadToFile.
     {
         dlm_test::FakeHttpClient fakeClient(body, /*acceptRanges=*/false);
         dlm::Downloader downloader(fakeClient);

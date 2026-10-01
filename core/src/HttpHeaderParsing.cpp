@@ -22,7 +22,7 @@ std::string trimAscii(const std::string& s) {
 }
 
 bool parseStatusLine(const std::string& line, long& statusCode) {
-    // Ожидаем "HTTP/1.1 206 ...". Нам важна только цифровая часть.
+    // We expect "HTTP/1.1 206 ...". Only the numeric part matters to us.
     const auto firstSpace = line.find(' ');
     if (firstSpace == std::string::npos) {
         return false;
@@ -60,7 +60,7 @@ void applyHeaderField(const std::string& name, const std::string& value, HttpRes
     } else if (name == "last-modified") {
         response.lastModified = value;
     } else if (name == "content-range") {
-        // "bytes 0-4194303/104857600" — заголовок пишется через дефис, не "_"
+        // "bytes 0-4194303/104857600" — the header uses a hyphen, not "_"
         const auto slash = value.find('/');
         if (slash != std::string::npos) {
             const std::string totalStr = value.substr(slash + 1);

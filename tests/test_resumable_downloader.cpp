@@ -41,7 +41,7 @@ int main() {
     const std::string etag = "\"v1-abc\"";
     const std::string url = "http://example.invalid/file";
 
-    // 1) Свежая докачиваемая загрузка: качается целиком, метафайл в конце удаляется.
+    // 1) A fresh resumable download: downloads in full, the meta file is removed at the end.
     {
         dlm_test::FakeHttpClient fakeClient(body, /*acceptRanges=*/true, /*writeChunkSize=*/500, etag);
         dlm::Downloader downloader(fakeClient);
@@ -53,14 +53,15 @@ int main() {
 
         assert(result.success);
         assert(readFile(outputPath) == body);
-        assert(!fileExists(metaPath)); // метафайл убран после успешного завершения
+        assert(!fileExists(metaPath)); // the meta file is removed after successful completion
 
         std::remove(outputPath.c_str());
     }
 
-    // 2) Продолжение прерванной загрузки: первые два чанка уже "скачаны" и
-    //    отмечены в метафайле — downloadResumable должен запросить только
-    //    оставшиеся и в сумме дать побайтово верный файл.
+    // 2) Resuming an interrupted download: the first two chunks are already
+    //    "downloaded" and marked in the meta file — downloadResumable should
+    //    request only the remaining ones and produce a byte-for-byte correct
+    //    file overall.
     {
         const std::string outputPath = "test_resumable_partial.tmp";
         const std::string metaPath = dlm::MetaFile::pathFor(outputPath);
@@ -69,8 +70,8 @@ int main() {
         const std::size_t numChunks =
             static_cast<std::size_t>((totalSize + chunkSize - 1) / chunkSize);
 
-        // Преаллоцируем файл и вручную "докачиваем" первые 2 чанка заранее,
-        // как будто предыдущий запуск успел скачать только их.
+        // Preallocate the file and manually "download" the first 2 chunks
+        // ahead of time, as if the previous run had only managed to download those.
         assert(dlm::FileWriter::preallocate(outputPath, totalSize));
         dlm::FileWriter writer(outputPath);
 
@@ -99,8 +100,8 @@ int main() {
         assert(readFile(outputPath) == body);
         assert(!fileExists(metaPath));
 
-        // 1 пробный запрос (bytes=0-0, с If-Range) + по одному на каждый
-        // недостающий чанк — уже готовые 2 чанка перекачиваться не должны.
+        // 1 probe request (bytes=0-0, with If-Range) + one for each missing
+        // chunk — the 2 already-complete chunks must not be downloaded again.
         const int expectedRangeRequests =
             1 + static_cast<int>(numChunks - preloadedChunks);
         assert(fakeClient.rangeRequestCount == expectedRangeRequests);
@@ -108,8 +109,8 @@ int main() {
         std::remove(outputPath.c_str());
     }
 
-    // 3) Файл на сервере изменился (ETag не совпал) — откат на полную
-    //    перезагрузку, а не докачку по устаревшей карте чанков.
+    // 3) The file on the server has changed (ETag mismatch) — falls back to
+    //    a full re-download instead of resuming from a stale chunk map.
     {
         const std::string outputPath = "test_resumable_changed.tmp";
         const std::string metaPath = dlm::MetaFile::pathFor(outputPath);
@@ -121,7 +122,7 @@ int main() {
         staleMeta.etag = "\"stale-etag\"";
         const std::size_t numChunks = static_cast<std::size_t>(
             (staleMeta.totalSize + chunkSize - 1) / chunkSize);
-        staleMeta.chunkDone.assign(numChunks, true); // якобы всё уже готово по старым данным
+        staleMeta.chunkDone.assign(numChunks, true); // supposedly everything is already done per the old data
 
         assert(dlm::FileWriter::preallocate(outputPath, staleMeta.totalSize));
         assert(dlm::MetaFile::save(metaPath, staleMeta));

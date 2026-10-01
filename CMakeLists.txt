@@ -13,7 +13,7 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
 endif()
 
-# Общие варнинги — INTERFACE-либа, подключается к каждому нашему таргету.
+# Shared warning flags — an INTERFACE lib, attached to every one of our targets.
 add_library(dlm_warnings INTERFACE)
 if (MSVC)
     target_compile_options(dlm_warnings INTERFACE /W4 /permissive-)
@@ -27,8 +27,9 @@ add_subdirectory(cli)
 enable_testing()
 add_subdirectory(tests)
 
-# Бенчмарк (1 vs 4 vs 8 потоков x размеры чанка) — отдельный ручной таргет,
-# не часть обычной сборки/ctest. См. benchmarks/README через bench_downloader.cpp.
+# Benchmark (1 vs 4 vs 8 threads x chunk sizes) — a separate, manually
+# built target, not part of the regular build/ctest. See benchmarks/README
+# via bench_downloader.cpp.
 option(DLM_BUILD_BENCHMARKS "Build benchmark tools (bench_downloader)" OFF)
 if (DLM_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)

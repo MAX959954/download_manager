@@ -6,9 +6,9 @@ target_link_libraries(bench_downloader
     PRIVATE dlm_warnings
 )
 
-# Реконструкция СТАРОГО (досконструкции ChunkQueue) статического алгоритма —
-# только для воспроизведения сравнения "до/после" в README, не используется
-# нигде в продакшен-коде.
+# Reconstruction of the OLD static algorithm (before ChunkQueue) — only
+# used to reproduce the before/after comparison in the README, not used
+# anywhere in production code.
 add_executable(old_static_bench
     old_static_bench.cpp
 )

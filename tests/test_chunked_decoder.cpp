@@ -7,7 +7,7 @@
 int main() {
     using dlm::detail::consumeChunkedBytes;
 
-    // Один полный ответ, пришедший сразу целиком.
+    // A single complete response that arrives all at once.
     {
         std::string buffer = "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
         std::string received;
@@ -21,8 +21,8 @@ int main() {
         assert(buffer.empty());
     }
 
-    // Данные приходят по кусочкам (имитация нескольких recv()) — буфер
-    // должен копить недостающее и ничего не терять между вызовами.
+    // Data arrives in pieces (simulating several recv() calls) — the buffer
+    // must accumulate what's missing and lose nothing between calls.
     {
         std::string received;
         std::string buffer;
@@ -33,7 +33,7 @@ int main() {
             received.append(d, n); return true;
         }, finished));
         assert(!finished);
-        assert(received.empty()); // чанк ещё не дочитан целиком
+        assert(received.empty()); // the chunk hasn't been fully read yet
 
         buffer += "lo\r\n0\r\n\r\n";
         assert(consumeChunkedBytes(buffer, [&](const char* d, std::size_t n) {
@@ -44,7 +44,7 @@ int main() {
         assert(buffer.empty());
     }
 
-    // Трейлеры после завершающего чанка нулевой длины.
+    // Trailers after the final zero-length chunk.
     {
         std::string buffer = "0\r\nX-Trailer: value\r\n\r\n";
         std::string received;
@@ -57,7 +57,7 @@ int main() {
         assert(buffer.empty());
     }
 
-    // Битый формат (не hex-размер) — должны аккуратно вернуть false.
+    // Malformed format (not a hex size) — should cleanly return false.
     {
         std::string buffer = "zz\r\nhello\r\n";
         bool finished = false;
@@ -66,7 +66,7 @@ int main() {
         assert(!ok);
     }
 
-    // onData вернул false — прерываем разбор (пауза/отмена).
+    // onData returned false — abort parsing (pause/cancel).
     {
         std::string buffer = "5\r\nhello\r\n0\r\n\r\n";
         bool finished = false;

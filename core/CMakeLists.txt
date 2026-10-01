@@ -30,6 +30,6 @@ target_link_libraries(dlm_core
 )
 
 if(WIN32)
-    # SocketHttpClient.cpp использует Winsock (socket/connect/getaddrinfo).
+    # SocketHttpClient.cpp uses Winsock (socket/connect/getaddrinfo).
     target_link_libraries(dlm_core PUBLIC ws2_32)
 endif()

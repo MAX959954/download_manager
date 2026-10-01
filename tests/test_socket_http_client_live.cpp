@@ -1,7 +1,8 @@
-// Интеграционный тест: реальное TCP+TLS соединение с реальным сервером.
-// В отличие от остальных тестов (которые работают через FakeHttpClient и
-// не трогают сеть), этот требует интернет и бьёт по живому GitHub —
-// запускай его отдельно, он не обязан проходить в офлайне/без сети.
+// Integration test: a real TCP+TLS connection to a real server.
+// Unlike the other tests (which go through FakeHttpClient and don't touch
+// the network), this one requires internet access and hits the live
+// GitHub — run it separately, it is not expected to pass offline/without
+// network access.
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -11,7 +12,7 @@
 int main() {
     dlm::SocketHttpClient client;
 
-    // 1) Обычный GET по HTTPS, без Range — читаем небольшой текстовый файл.
+    // 1) A regular GET over HTTPS, without Range — read a small text file.
     {
         dlm::HttpRequest request;
         request.url = "https://raw.githubusercontent.com/octocat/Hello-World/master/README";
@@ -27,8 +28,8 @@ int main() {
         assert(!body.empty());
     }
 
-    // 2) Range-запрос к тому же файлу — проверяем Content-Range/206 и что
-    //    реально вернулся именно запрошенный диапазон байт.
+    // 2) A Range request to the same file — verify Content-Range/206 and
+    //    that the requested byte range was actually returned.
     {
         dlm::HttpRequest request;
         request.url = "https://raw.githubusercontent.com/octocat/Hello-World/master/README";
@@ -48,7 +49,7 @@ int main() {
         assert(response.contentRangeTotal > 0);
     }
 
-    // 3) Редирект: github.com/... -> обычно 301/302 на другой хост.
+    // 3) Redirect: github.com/... -> usually a 301/302 to a different host.
     {
         dlm::HttpRequest request;
         request.url = "https://github.com/octocat/Hello-World/raw/master/README";
@@ -60,7 +61,7 @@ int main() {
         });
 
         std::printf("[redirect GET] status=%ld bytes=%zu\n", response.statusCode, body.size());
-        assert(response.statusCode == 200); // редирект должен быть пройден автоматически
+        assert(response.statusCode == 200); // the redirect must be followed automatically
         assert(!body.empty());
     }
 

@@ -8,7 +8,7 @@
 namespace {
 
 void printUsage(const char* argv0) {
-    std::fprintf(stderr, "Использование: %s <url> -o <file>\n", argv0);
+    std::fprintf(stderr, "Usage: %s <url> -o <file>\n", argv0);
 }
 
 } // namespace
@@ -42,12 +42,12 @@ int main(int argc, char** argv) {
     const dlm::DownloadResult result = downloader.downloadToFile(url, outputPath);
 
     if (!result.success) {
-        std::fprintf(stderr, "Ошибка загрузки: %s\n", result.error.c_str());
+        std::fprintf(stderr, "Download error: %s\n", result.error.c_str());
         return 1;
     }
 
-    std::printf("Загружено: %s\n", outputPath.c_str());
-    std::printf("Размер: %lld байт\n", static_cast<long long>(result.bytesWritten));
+    std::printf("Downloaded: %s\n", outputPath.c_str());
+    std::printf("Size: %lld bytes\n", static_cast<long long>(result.bytesWritten));
     std::printf("Accept-Ranges: %s\n", result.response.acceptRanges ? "yes" : "no");
     if (!result.response.etag.empty()) {
         std::printf("ETag: %s\n", result.response.etag.c_str());
