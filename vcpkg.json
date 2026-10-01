@@ -2,6 +2,7 @@
   "name": "download-manager",
   "version": "0.1.0",
   "dependencies": [
-    "curl"
+    "curl",
+    "openssl"
   ]
 }

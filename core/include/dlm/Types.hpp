@@ -31,6 +31,7 @@ struct DownloadResult {
     std::int64_t bytesWritten = 0;
     bool success = false;
     std::string error;
+    std::string sha256; // заполняется, если скачивание дошло до финальной проверки
 };
 
 struct ChunkSpec {
