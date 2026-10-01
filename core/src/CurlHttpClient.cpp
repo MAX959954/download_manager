@@ -1,9 +1,9 @@
 #include "dlm/CurlHttpClient.hpp"
 
+#include "dlm/HttpHeaderParsing.hpp"
+
 #include <curl/curl.h>
 
-#include <cctype>
-#include <exception>
 #include <mutex>
 
 namespace dlm {
@@ -29,22 +29,6 @@ void curlGlobalRelease() {
     }
 }
 
-std::string toLower(std::string s) {
-    for (char& c : s) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return s;
-}
-
-std::string trim(const std::string& s) {
-    const auto begin = s.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos) {
-        return "";
-    }
-    const auto end = s.find_last_not_of(" \t\r\n");
-    return s.substr(begin, end - begin + 1);
-}
-
 size_t writeThunk(char* ptr, size_t size, size_t nmemb, void* userdata) {
     const size_t bytes = size * nmemb;
     const auto* callback = static_cast<const WriteCallback*>(userdata);
@@ -55,38 +39,20 @@ size_t writeThunk(char* ptr, size_t size, size_t nmemb, void* userdata) {
     return (*callback)(ptr, bytes) ? bytes : 0;
 }
 
+int progressThunk(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    const auto* token = static_cast<const CancelToken*>(userdata);
+    // Ненулевой возврат — сигнал libcurl немедленно прервать трансфер.
+    return (token && token->shouldAbortTransfer()) ? 1 : 0;
+}
+
 size_t headerThunk(char* buffer, size_t size, size_t nitems, void* userdata) {
     const size_t bytes = size * nitems;
     auto* response = static_cast<HttpResponse*>(userdata);
 
     const std::string line(buffer, bytes);
-    const auto colon = line.find(':');
-    if (colon == std::string::npos) {
-        return bytes;
-    }
-
-    const std::string name = toLower(trim(line.substr(0, colon)));
-    const std::string value = trim(line.substr(colon + 1));
-
-    if (name == "accept-ranges") {
-        response->acceptRanges = toLower(value).find("bytes") != std::string::npos;
-    } else if (name == "etag") {
-        response->etag = value;
-    } else if (name == "last-modified") {
-        response->lastModified = value;
-    } else if (name == "content-range") {
-        // "bytes 0-4194303/104857600" — заголовок пишется через дефис, не "_"
-        const auto slash = value.find('/');
-        if (slash != std::string::npos) {
-            const std::string totalStr = value.substr(slash + 1);
-            if (totalStr != "*") {
-                try {
-                    response->contentRangeTotal = std::stoll(totalStr);
-                } catch (const std::exception&) {
-                    // Некорректный заголовок — просто игнорируем.
-                }
-            }
-        }
+    std::string name, value;
+    if (detail::parseHeaderFieldLine(line, name, value)) {
+        detail::applyHeaderField(name, value, *response);
     }
     return bytes;
 }
@@ -97,7 +63,8 @@ CurlHttpClient::CurlHttpClient() { curlGlobalAcquire(); }
 
 CurlHttpClient::~CurlHttpClient() { curlGlobalRelease(); }
 
-HttpResponse CurlHttpClient::perform(const HttpRequest& request, const WriteCallback& onData) {
+HttpResponse CurlHttpClient::perform(const HttpRequest& request, const WriteCallback& onData,
+                                      const CancelToken* cancelToken) {
     HttpResponse response;
 
     CURL* curl = curl_easy_init();
@@ -126,11 +93,22 @@ HttpResponse CurlHttpClient::perform(const HttpRequest& request, const WriteCall
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeThunk);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &onData);
 
-    curl_easy_perform(curl);
+    // Пауза/отмена: включаем progress-колбэк и даём ему указатель на токен.
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressThunk);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancelToken);
+
+    const CURLcode curlResult = curl_easy_perform(curl);
 
     long statusCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
     response.statusCode = statusCode;
+
+    if (curlResult == CURLE_ABORTED_BY_CALLBACK) {
+        // Трансфер прерван нами самими (пауза/отмена) — это не HTTP-ответ,
+        // явно обнуляем statusCode, чтобы Downloader не принял его за успех.
+        response.statusCode = 0;
+    }
 
     curl_off_t contentLength = -1;
     curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &contentLength);

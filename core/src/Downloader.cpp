@@ -1,15 +1,48 @@
 #include "dlm/Downloader.hpp"
 #include "dlm/FileWriter.hpp"
 #include "dlm/MetaFile.hpp"
+#include "dlm/Sha256.hpp"
 #include "dlm/ThreadPool.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <chrono>
 #include <condition_variable>
 #include <fstream>
+#include <thread>
 #include <vector>
 
 namespace dlm {
+
+namespace {
+
+bool verifySha256(DownloadResult& result, const std::string& outputPath,
+                   const std::string& expectedSha256) {
+    bool hashOk = false;
+    result.sha256 = sha256File(outputPath, hashOk);
+    if (!hashOk) {
+        result.success = false;
+        result.error = "не удалось посчитать SHA-256: " + outputPath;
+        return false;
+    }
+    if (expectedSha256.empty()) {
+        return true;
+    }
+    auto toLower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    if (toLower(result.sha256) != toLower(expectedSha256)) {
+        result.success = false;
+        result.error = "SHA-256 не совпадает: ожидалось " + expectedSha256 +
+                        ", получено " + result.sha256;
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 Downloader::Downloader(IHttpClient& httpClient) : httpClient_(httpClient) {}
 
@@ -122,7 +155,11 @@ DownloadResult Downloader::downloadChunked(const std::string& url,
 DownloadResult Downloader::downloadParallel(const std::string& url,
                                              const std::string& outputPath,
                                              std::int64_t chunkSize,
-                                             std::size_t numWorkers) {
+                                             std::size_t numWorkers,
+                                             CancelToken* cancelToken,
+                                             std::size_t maxRetries,
+                                             const std::string& expectedSha256,
+                                             RateLimiter* rateLimiter) {
     DownloadResult result;
 
     if (chunkSize <= 0 || numWorkers == 0) {
@@ -165,7 +202,7 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
         ThreadPool pool(numWorkers);
         for (const ChunkSpec& chunk : chunks) {
             pool.enqueue([&, chunk] {
-                if (anyFailed.load()) {
+                if (anyFailed.load() || (cancelToken && cancelToken->shouldAbortTransfer())) {
                     if (--remaining == 0) { doneCv.notify_one(); }
                     return;
                 }
@@ -175,20 +212,40 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
                 chunkRequest.headers["Range"] = "bytes=" + std::to_string(chunk.offset) + "-" +
                     std::to_string(chunk.offset + chunk.size - 1);
 
+                HttpResponse chunkResponse;
+                bool chunkOk = false;
                 std::int64_t writtenInChunk = 0;
-                bool writeFailed = false;
-                WriteCallback onData = [&](const char* data, std::size_t n) {
-                    if (!writer.writeAt(chunk.offset + writtenInChunk, data, n)) {
-                        writeFailed = true;
-                        return false;
-                    }
-                    writtenInChunk += static_cast<std::int64_t>(n);
-                    return true;
-                };
 
-                const HttpResponse chunkResponse = httpClient_.perform(chunkRequest, onData);
-                const bool chunkOk = chunkResponse.statusCode == 206 && !writeFailed &&
-                                      writtenInChunk == chunk.size;
+                for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
+                    if (cancelToken && cancelToken->shouldAbortTransfer()) {
+                        break; // паузу/отмену ретраить не нужно
+                    }
+
+                    writtenInChunk = 0;
+                    bool writeFailed = false;
+                    WriteCallback onData = [&](const char* data, std::size_t n) {
+                        if (rateLimiter) {
+                            rateLimiter->acquire(n);
+                        }
+                        if (!writer.writeAt(chunk.offset + writtenInChunk, data, n)) {
+                            writeFailed = true;
+                            return false;
+                        }
+                        writtenInChunk += static_cast<std::int64_t>(n);
+                        return true;
+                    };
+
+                    chunkResponse = httpClient_.perform(chunkRequest, onData, cancelToken);
+                    chunkOk = chunkResponse.statusCode == 206 && !writeFailed &&
+                              writtenInChunk == chunk.size;
+
+                    if (chunkOk) {
+                        break;
+                    }
+                    if (attempt < maxRetries) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200 << attempt));
+                    }
+                }
 
                 if (!chunkOk) {
                     std::lock_guard<std::mutex> lock(errorMutex);
@@ -211,7 +268,9 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
     } // ~ThreadPool() уже присоединил все потоки
 
     if (anyFailed) {
-        result.error = firstError;
+        result.error = (cancelToken && cancelToken->isCancelled()) ? "загрузка отменена"
+                      : (cancelToken && cancelToken->isPaused())   ? "загрузка приостановлена"
+                                                                    : firstError;
         return result;
     }
 
@@ -222,13 +281,18 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
     result.response.contentRangeTotal = totalSize;
     result.response.acceptRanges = true;
     result.response.effectiveUrl = url;
+    verifySha256(result, outputPath, expectedSha256);
     return result;
 }
 
 DownloadResult Downloader::downloadResumable(const std::string& url,
                                               const std::string& outputPath,
                                               std::int64_t chunkSize,
-                                              std::size_t numWorkers) {
+                                              std::size_t numWorkers,
+                                              CancelToken* cancelToken,
+                                              std::size_t maxRetries,
+                                              const std::string& expectedSha256,
+                                              RateLimiter* rateLimiter) {
     DownloadResult result;
 
     if (chunkSize <= 0 || numWorkers == 0) {
@@ -252,7 +316,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
             probeRequest.headers["If-Range"] = meta.lastModified;
         }
         WriteCallback discard = [](const char*, std::size_t) { return true; };
-        const HttpResponse probe = httpClient_.perform(probeRequest, discard);
+        const HttpResponse probe = httpClient_.perform(probeRequest, discard, cancelToken);
 
         // 206 + тот же размер = файл на сервере не менялся, докачиваем.
         // 200 (If-Range не совпал) или другой размер = файл сменился —
@@ -265,7 +329,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         probeRequest.url = url;
         probeRequest.headers["Range"] = "bytes=0-0";
         WriteCallback discard = [](const char*, std::size_t) { return true; };
-        const HttpResponse probe = httpClient_.perform(probeRequest, discard);
+        const HttpResponse probe = httpClient_.perform(probeRequest, discard, cancelToken);
 
         if (probe.statusCode != 206 || probe.contentRangeTotal <= 0) {
             MetaFile::remove(metaPath);
@@ -314,6 +378,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         result.response.contentLength = meta.totalSize;
         result.response.acceptRanges = true;
         result.response.effectiveUrl = url;
+        verifySha256(result, outputPath, expectedSha256);
         return result;
     }
 
@@ -332,7 +397,7 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         ThreadPool pool(numWorkers);
         for (const ChunkSpec& chunk : pending) {
             pool.enqueue([&, chunk] {
-                if (anyFailed.load()) {
+                if (anyFailed.load() || (cancelToken && cancelToken->shouldAbortTransfer())) {
                     if (--remaining == 0) { doneCv.notify_one(); }
                     return;
                 }
@@ -342,20 +407,40 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
                 chunkRequest.headers["Range"] = "bytes=" + std::to_string(chunk.offset) + "-" +
                     std::to_string(chunk.offset + chunk.size - 1);
 
+                HttpResponse chunkResponse;
+                bool chunkOk = false;
                 std::int64_t writtenInChunk = 0;
-                bool writeFailed = false;
-                WriteCallback onData = [&](const char* data, std::size_t n) {
-                    if (!writer.writeAt(chunk.offset + writtenInChunk, data, n)) {
-                        writeFailed = true;
-                        return false;
-                    }
-                    writtenInChunk += static_cast<std::int64_t>(n);
-                    return true;
-                };
 
-                const HttpResponse chunkResponse = httpClient_.perform(chunkRequest, onData);
-                const bool chunkOk = chunkResponse.statusCode == 206 && !writeFailed &&
-                                      writtenInChunk == chunk.size;
+                for (std::size_t attempt = 0; attempt <= maxRetries; ++attempt) {
+                    if (cancelToken && cancelToken->shouldAbortTransfer()) {
+                        break; // паузу/отмену ретраить не нужно
+                    }
+
+                    writtenInChunk = 0;
+                    bool writeFailed = false;
+                    WriteCallback onData = [&](const char* data, std::size_t n) {
+                        if (rateLimiter) {
+                            rateLimiter->acquire(n);
+                        }
+                        if (!writer.writeAt(chunk.offset + writtenInChunk, data, n)) {
+                            writeFailed = true;
+                            return false;
+                        }
+                        writtenInChunk += static_cast<std::int64_t>(n);
+                        return true;
+                    };
+
+                    chunkResponse = httpClient_.perform(chunkRequest, onData, cancelToken);
+                    chunkOk = chunkResponse.statusCode == 206 && !writeFailed &&
+                              writtenInChunk == chunk.size;
+
+                    if (chunkOk) {
+                        break;
+                    }
+                    if (attempt < maxRetries) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200 << attempt));
+                    }
+                }
 
                 if (!chunkOk) {
                     std::lock_guard<std::mutex> lock(errorMutex);
@@ -387,8 +472,10 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
     if (anyFailed) {
         // Метафайл уже отражает то, что реально докачано — следующий вызов
         // downloadResumable() продолжит именно с этого места.
-        result.error = firstError;
         result.bytesWritten = bytesDone.load();
+        result.error = (cancelToken && cancelToken->isCancelled()) ? "загрузка отменена"
+                      : (cancelToken && cancelToken->isPaused())   ? "загрузка приостановлена"
+                                                                    : firstError;
         return result;
     }
 
@@ -400,7 +487,9 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
     result.response.contentRangeTotal = meta.totalSize;
     result.response.acceptRanges = true;
     result.response.effectiveUrl = url;
+    verifySha256(result, outputPath, expectedSha256);
     return result;
 }
+
 
 } // namespace dlm

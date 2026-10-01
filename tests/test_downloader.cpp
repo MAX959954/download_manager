@@ -15,7 +15,8 @@ public:
     explicit FakeHttpClient(std::string body, long statusCode = 200, bool acceptRanges = true)
         : body_(std::move(body)), statusCode_(statusCode), acceptRanges_(acceptRanges) {}
 
-    dlm::HttpResponse perform(const dlm::HttpRequest& request, const dlm::WriteCallback& onData) override {
+    dlm::HttpResponse perform(const dlm::HttpRequest& request, const dlm::WriteCallback& onData,
+                               const dlm::CancelToken* = nullptr) override {
         dlm::HttpResponse response;
         response.statusCode = statusCode_;
         response.contentLength = static_cast<std::int64_t>(body_.size());

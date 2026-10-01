@@ -12,7 +12,7 @@ public:
     CurlHttpClient(const CurlHttpClient&) = delete;
     CurlHttpClient& operator=(const CurlHttpClient&) = delete;
 
-    HttpResponse perform(const HttpRequest& request, const WriteCallback& onData) override;
+    HttpResponse perform(const HttpRequest& request, const WriteCallback& onData , const CancelToken* cancelToken = nullptr) override;
 };
 
 } // namespace dlm

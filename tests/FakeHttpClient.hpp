@@ -1,8 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <string>
+#include <thread>
 
 #include <dlm/IHttpClient.hpp>
 
@@ -31,12 +34,14 @@ class FakeHttpClient final : public dlm::IHttpClient {
 public:
     explicit FakeHttpClient(std::string body, bool acceptRanges = true,
                              std::size_t writeChunkSize = 0, std::string etag = "",
-                             bool failIfRangeMismatch = false)
+                             bool failIfRangeMismatch = false,
+                             std::chrono::microseconds delayPerPiece = std::chrono::microseconds(0))
         : body_(std::move(body)), acceptRanges_(acceptRanges),
           writeChunkSize_(writeChunkSize), etag_(std::move(etag)),
-          failIfRangeMismatch_(failIfRangeMismatch) {}
+          failIfRangeMismatch_(failIfRangeMismatch), delayPerPiece_(delayPerPiece) {}
 
-    dlm::HttpResponse perform(const dlm::HttpRequest& request, const dlm::WriteCallback& onData) override {
+    dlm::HttpResponse perform(const dlm::HttpRequest& request, const dlm::WriteCallback& onData,
+                                                    const dlm::CancelToken* cancelToken = nullptr) override {
         dlm::HttpResponse response;
         response.effectiveUrl = request.url;
         response.acceptRanges = acceptRanges_;
@@ -46,7 +51,7 @@ public:
         if (rangeIt == request.headers.end() || !acceptRanges_) {
             response.statusCode = 200;
             response.contentLength = static_cast<std::int64_t>(body_.size());
-            if (!deliver(body_.data(), body_.size(), onData)) {
+            if (!deliver(body_.data(), body_.size(), onData, cancelToken)) {
                 response.statusCode = 0;
             }
             return response;
@@ -59,7 +64,7 @@ public:
             // Сервер игнорирует If-Range, если он не совпал, и отдаёт файл целиком.
             response.statusCode = 200;
             response.contentLength = static_cast<std::int64_t>(body_.size());
-            if (!deliver(body_.data(), body_.size(), onData)) {
+            if (!deliver(body_.data(), body_.size(), onData, cancelToken)) {
                 response.statusCode = 0;
             }
             return response;
@@ -81,21 +86,31 @@ public:
         response.statusCode = 206;
         response.contentLength = len;
         response.contentRangeTotal = static_cast<std::int64_t>(body_.size());
-        if (!deliver(body_.data() + start, static_cast<std::size_t>(len), onData)) {
+        if (!deliver(body_.data() + start, static_cast<std::size_t>(len), onData, cancelToken)) {
             response.statusCode = 0;
         }
         return response;
     }
 
-    int rangeRequestCount = 0;
+    std::atomic<int> rangeRequestCount{0};
 
 private:
-    bool deliver(const char* data, std::size_t size, const dlm::WriteCallback& onData) const {
+    bool deliver(const char* data, std::size_t size, const dlm::WriteCallback& onData,
+                 const dlm::CancelToken* cancelToken) const {
         if (writeChunkSize_ == 0) {
+            if (cancelToken && cancelToken->shouldAbortTransfer()) {
+                return false;
+            }
             return onData(data, size);
         }
         std::size_t sent = 0;
         while (sent < size) {
+            if (cancelToken && cancelToken->shouldAbortTransfer()) {
+                return false; // имитируем CURLE_ABORTED_BY_CALLBACK
+            }
+            if (delayPerPiece_.count() > 0) {
+                std::this_thread::sleep_for(delayPerPiece_);
+            }
             const std::size_t piece = std::min(writeChunkSize_, size - sent);
             if (!onData(data + sent, piece)) {
                 return false;
@@ -126,6 +141,7 @@ private:
     std::size_t writeChunkSize_;
     std::string etag_;
     bool failIfRangeMismatch_;
+    std::chrono::microseconds delayPerPiece_;
 };
 
 } // namespace dlm_test
