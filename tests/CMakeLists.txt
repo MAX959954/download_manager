@@ -99,6 +99,7 @@ add_executable(test_socket_http_client_live
 target_include_directories(test_socket_http_client_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_socket_http_client_live PRIVATE dlm_core PRIVATE dlm_warnings)
 add_test(NAME test_socket_http_client_live COMMAND test_socket_http_client_live)
+set_tests_properties(test_socket_http_client_live PROPERTIES LABELS "live")
 
 add_executable(test_downloader_live
     test_downloader_live.cpp
@@ -106,6 +107,7 @@ add_executable(test_downloader_live
 target_include_directories(test_downloader_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_downloader_live PRIVATE dlm_core PRIVATE dlm_warnings)
 add_test(NAME test_downloader_live COMMAND test_downloader_live)
+set_tests_properties(test_downloader_live PROPERTIES LABELS "live")
 
 add_executable(test_curl_http_client_live
     test_curl_http_client_live.cpp
@@ -113,3 +115,4 @@ add_executable(test_curl_http_client_live
 target_include_directories(test_curl_http_client_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_curl_http_client_live PRIVATE dlm_core PRIVATE dlm_warnings)
 add_test(NAME test_curl_http_client_live COMMAND test_curl_http_client_live)
+set_tests_properties(test_curl_http_client_live PROPERTIES LABELS "live")

@@ -1,5 +1,7 @@
 # Multithreaded Download Manager (dlm)
 
+[![CI](https://github.com/MAX959954/download_manager/actions/workflows/ci.yml/badge.svg)](https://github.com/MAX959954/download_manager/actions/workflows/ci.yml)
+
 Многопоточный менеджер загрузок на C++: параллельная докачка файлов через
 HTTP Range-запросы, пул потоков, возобновление после обрыва, ограничение
 скорости и Qt-интерфейс.
@@ -45,6 +47,35 @@ cmake --build build/default
 
 ```bash
 ./build/default/download_manager <url> -o <file>
+```
+
+## CI и проверка потокобезопасности
+
+GitHub Actions на каждый push/PR:
+
+- **build & test** — обычная Debug-сборка (Linux, системные `libcurl`/`openssl`),
+  прогон всех офлайн-тестов через `ctest`.
+- **sanitizers** — те же тесты, собранные и прогнанные под
+  **ThreadSanitizer** и **AddressSanitizer + UndefinedBehaviorSanitizer**.
+  `Downloader`/`DownloadManager` гоняют `curl`/сокеты внутри нескольких
+  `std::thread`, разделяя `FileWriter`, метафайл и атомарные флаги паузы —
+  TSan здесь реально ловит гонки, если они появятся, а не просто
+  «зелёная галочка для вида».
+- **live network tests** — отдельный необязательный джоб: три теста ходят
+  по-настоящему в интернет (TLS-рукопожатие и Range-запросы к
+  raw.githubusercontent.com) и проверяют `SocketHttpClient`/`CurlHttpClient`
+  на живом сервере с проверкой SHA-256. Вынесены отдельно и помечены
+  `continue-on-error`, чтобы временные сетевые проблемы раннера не красили
+  основную сборку.
+
+Локально то же самое:
+
+```bash
+cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -g" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -g"
+cmake --build build-tsan
+ctest --test-dir build-tsan --output-on-failure -LE live
 ```
 
 ## Дорожная карта
