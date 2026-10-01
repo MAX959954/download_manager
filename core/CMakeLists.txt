@@ -1,4 +1,4 @@
-find_package(CURL CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
