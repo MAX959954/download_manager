@@ -50,6 +50,25 @@ The built CLI:
 ./build/default/download_manager <url> -o <file>
 ```
 
+By default that's a single connection with no chunking (Stage 1). To
+actually use the parallel engine described below:
+
+```bash
+# Multiple connections, adaptive chunking
+./build/default/download_manager <url> -o <file> --parallel --workers 8
+
+# Same, but resumable across runs (progress saved to <file>.dlm)
+./build/default/download_manager <url> -o <file> --resume --workers 8
+
+# Cap bandwidth and verify a checksum
+./build/default/download_manager <url> -o <file> --parallel --rate-limit 2M --sha256 <hex>
+```
+
+Run `download_manager --help` for the full flag list (`--chunk-size`,
+`--retries`, …). Ctrl+C during a `--resume` download cancels cleanly and
+leaves the `.dlm` metafile in place, so rerunning the same command picks
+up where it left off.
+
 ## CI and thread-safety checks
 
 GitHub Actions on every push/PR:
@@ -160,18 +179,24 @@ python3 benchmarks/plot_before_after.py
       on top of a libcurl easy handle (redirects, `Content-Length`,
       `Accept-Ranges`, `ETag`/`Last-Modified`), `Downloader::downloadToFile`
       streams the response body to a file. `dlm <url> -o file` works.
-- [ ] **Stage 2. Chunks, but sequential** — splitting into fixed-size
-      chunks, file preallocation, offset writes.
-- [ ] **Stage 3. Thread pool** — a custom worker pool, each with its own
-      CURL easy handle.
-- [ ] **Stage 4. Resume** — a `file.dlm` metafile, `If-Range`, a bitmap of
-      completed chunks.
-- [ ] **Stage 5. Pause/cancel** — cooperative stop via
-      `CURLOPT_XFERINFOFUNCTION`.
-- [ ] **Stage 6. Download manager** — a job queue, a public API for the GUI.
+- [x] **Stage 2. Chunks, but sequential** — splitting into fixed-size
+      chunks, file preallocation, offset writes (`Downloader::downloadChunked`).
+- [x] **Stage 3. Thread pool** — a custom worker pool
+      (`ThreadPool`/`ChunkQueue`), chunks downloaded in parallel with
+      adaptive splitting (`Downloader::downloadParallel`).
+- [x] **Stage 4. Resume** — a `file.dlm` metafile, `If-Range`, a bitmap of
+      completed chunks (`Downloader::downloadResumable`).
+- [x] **Stage 5. Pause/cancel** — cooperative stop via `CancelToken`,
+      polled from every worker and wired up to Ctrl+C in the CLI.
+- [x] **Stage 6. Download manager** — `DownloadManager` runs a queue of
+      jobs with a cap on concurrent downloads, each with pause/resume/cancel.
 - [ ] **Stage 7. Qt GUI** — a thin layer on top of the engine's API.
-- [ ] **Stage 8. The "wow" stage** — a token bucket, SHA-256, retries with
-      backoff, a custom HTTP+TLS client.
+- [x] **Stage 8. The "wow" stage** — a token bucket (`RateLimiter`),
+      SHA-256 verification, retries with backoff, and a custom HTTP+TLS
+      client on raw sockets (`SocketHttpClient`).
+
+All of the above except the Qt GUI is also reachable from the CLI —
+see `download_manager --help`.
 
 ### Decisions made up front
 
