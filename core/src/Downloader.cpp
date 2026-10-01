@@ -269,6 +269,17 @@ DownloadResult Downloader::downloadParallel(const std::string& url,
                     downloadOneRange(*rangeOpt);
                 }
 
+                // Декремент и notify обязаны идти под doneMutex: иначе
+                // возможен classic lost wakeup — воркер успевает обнулить
+                // remaining и дернуть notify_one() ровно в окне между тем,
+                // как главный поток проверил предикат (ещё false) и ещё не
+                // успел встать в ожидание на cv, и тогда notify пропадает
+                // впустую, а дождаться уже некому. Под TSan это окно
+                // расширяется инструментацией ровно настолько, чтобы гонка
+                // стала наблюдаемой (отсюда зависание именно там и только
+                // там, без печати гонки — это не data race, а баг
+                // синхронизации порядка).
+                std::lock_guard<std::mutex> doneLock(doneMutex);
                 if (--remaining == 0) { doneCv.notify_one(); }
             });
         }
@@ -408,6 +419,10 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         for (const ChunkSpec& chunk : pending) {
             pool.enqueue([&, chunk] {
                 if (anyFailed.load() || (cancelToken && cancelToken->shouldAbortTransfer())) {
+                    // См. комментарий у аналогичного места в downloadParallel:
+                    // декремент + notify должны идти под doneMutex, иначе
+                    // lost wakeup.
+                    std::lock_guard<std::mutex> doneLock(doneMutex);
                     if (--remaining == 0) { doneCv.notify_one(); }
                     return;
                 }
@@ -471,7 +486,10 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
                     MetaFile::save(MetaFile::pathFor(outputPath), meta);
                 }
 
-                if (--remaining == 0) { doneCv.notify_one(); }
+                {
+                    std::lock_guard<std::mutex> doneLock(doneMutex);
+                    if (--remaining == 0) { doneCv.notify_one(); }
+                }
             });
         }
 
