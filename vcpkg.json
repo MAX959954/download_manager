@@ -1,8 +1,20 @@
 {
   "name": "download-manager",
   "version": "0.1.0",
+  "builtin-baseline": "5dd2e1600d049b498ff9fb9fe15997533ae0c804",
   "dependencies": [
     "curl",
     "openssl"
-  ]
+  ],
+  "features": {
+    "gui": {
+      "description": "Qt Widgets GUI (dlm_gui) for the download manager",
+      "dependencies": [
+        {
+          "name": "qtbase",
+          "features": ["widgets"]
+        }
+      ]
+    }
+  }
 }
