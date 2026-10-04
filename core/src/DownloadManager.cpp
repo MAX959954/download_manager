@@ -38,7 +38,9 @@ void DownloadManager::runJob(const std::shared_ptr<Job>& job) {
     Downloader downloader(httpClient_);
     const DownloadResult result = downloader.downloadResumable(
         job->info.url, job->info.outputPath, job->info.chunkSize,
-        workersPerDownload_, &job->cancelToken);
+        workersPerDownload_, &job->cancelToken, /*maxRetries=*/3,
+        /*expectedSha256=*/"", /*rateLimiter=*/nullptr,
+        &job->bytesDone, &job->totalBytes);
 
     {
         std::lock_guard<std::mutex> lock(jobsMutex_);
@@ -96,10 +98,19 @@ void DownloadManager::cancel(std::uint64_t jobId) {
     }
 }
 
+// Copies out info plus the live progress atomics. jobsMutex_ must be held
+// by the caller (it guards info; the atomics are safe to read regardless).
+JobInfo DownloadManager::snapshot(const Job& job) {
+    JobInfo info = job.info;
+    info.bytesDone = job.bytesDone.load();
+    info.totalBytes = job.totalBytes.load();
+    return info;
+}
+
 JobInfo DownloadManager::status(std::uint64_t jobId) const {
     std::lock_guard<std::mutex> lock(jobsMutex_);
     const auto it = jobs_.find(jobId);
-    return it != jobs_.end() ? it->second->info : JobInfo{};
+    return it != jobs_.end() ? snapshot(*it->second) : JobInfo{};
 }
 
 std::vector<JobInfo> DownloadManager::allJobs() const {
@@ -107,7 +118,7 @@ std::vector<JobInfo> DownloadManager::allJobs() const {
     std::vector<JobInfo> result;
     result.reserve(jobs_.size());
     for (const auto& [id, job] : jobs_) {
-        result.push_back(job->info);
+        result.push_back(snapshot(*job));
     }
     return result;
 }

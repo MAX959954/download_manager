@@ -19,6 +19,35 @@
       "inherits": "default",
       "displayName": "Release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "gui",
+      "inherits": "default",
+      "displayName": "vcpkg + MinGW (with Qt GUI)",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "gui",
+        "DLM_BUILD_GUI": "ON"
+      }
+    },
+    {
+      "name": "qt",
+      "inherits": "default",
+      "displayName": "Installed Qt 6.11.2 MinGW (with Qt GUI)",
+      "description": "Uses the prebuilt Qt from C:/Qt instead of building qtbase via vcpkg; curl/openssl still come from vcpkg.",
+      "environment": {
+        "QT_ROOT": "C:/Qt/6.11.2/mingw_64",
+        "QT_MINGW": "C:/Qt/Tools/mingw1310_64",
+        "PATH": "$env{QT_MINGW}/bin;$env{QT_ROOT}/bin;C:/Qt/Tools/Ninja;C:/Qt/Tools/CMake_64/bin;$penv{PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "$env{QT_MINGW}/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "$env{QT_MINGW}/bin/g++.exe",
+        "CMAKE_PREFIX_PATH": "$env{QT_ROOT}",
+        "DLM_BUILD_GUI": "ON"
+      }
     }
+  ],
+  "buildPresets": [
+    { "name": "qt", "configurePreset": "qt", "targets": ["dlm_gui"] }
   ]
 }

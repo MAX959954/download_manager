@@ -27,6 +27,13 @@ struct JobInfo {
     std::int64_t chunkSize = 4 * 1024 * 1024;
     JobState state = JobState::Queued;
     DownloadResult result;
+
+    // Live progress snapshot, updated while state == Running; bytesDone
+    // keeps its last value after the job stops (Completed/Failed/
+    // Cancelled/Paused). totalBytes is 0 until the download's size probe
+    // completes.
+    std::int64_t bytesDone = 0;
+    std::int64_t totalBytes = 0;
 };
 
 // Manages a queue of downloads with a cap on how many run at once.
@@ -62,9 +69,15 @@ private:
     struct Job {
         JobInfo info;
         CancelToken cancelToken;
+        // The actual live counters Downloader::downloadResumable writes
+        // into from worker threads; status()/allJobs() snapshot these into
+        // JobInfo::bytesDone/totalBytes for callers to read.
+        std::atomic<std::int64_t> bytesDone{0};
+        std::atomic<std::int64_t> totalBytes{0};
     };
 
     void runJob(const std::shared_ptr<Job>& job);
+    static JobInfo snapshot(const Job& job);
 
     IHttpClient& httpClient_;
     ThreadPool pool_; // size = maxConcurrentDownloads

@@ -69,6 +69,39 @@ Run `download_manager --help` for the full flag list (`--chunk-size`,
 leaves the `.dlm` metafile in place, so rerunning the same command picks
 up where it left off.
 
+### Building the Qt GUI
+
+The GUI (`gui/`, target `dlm_gui`) is optional and off by default, since
+Qt is a heavy first-time vcpkg build. It's a thin Qt Widgets layer on top
+of the same `dlm_core` engine the CLI uses: add a URL, watch a live
+progress bar per job (polled from `DownloadManager` every 500 ms), and
+pause/resume/cancel each download.
+
+First, install the Qt dependency via vcpkg (one-time, takes a while to
+build from source the first time):
+
+```bash
+vcpkg install qtbase[widgets] --triplet x64-mingw-dynamic
+```
+
+Then configure and build with the `gui` preset, which turns on both the
+vcpkg `gui` manifest feature and the `DLM_BUILD_GUI` CMake option:
+
+```bash
+cmake --preset gui
+cmake --build build/gui
+```
+
+The built GUI executable:
+
+```bash
+./build/gui/gui/download_manager_gui
+```
+
+If Qt6 isn't found, `gui/CMakeLists.txt` just skips the `dlm_gui` target
+with a `STATUS` message instead of failing the build — so building without
+the `gui` preset/feature is unaffected.
+
 ## CI and thread-safety checks
 
 GitHub Actions on every push/PR:
@@ -190,13 +223,16 @@ python3 benchmarks/plot_before_after.py
       polled from every worker and wired up to Ctrl+C in the CLI.
 - [x] **Stage 6. Download manager** — `DownloadManager` runs a queue of
       jobs with a cap on concurrent downloads, each with pause/resume/cancel.
-- [ ] **Stage 7. Qt GUI** — a thin layer on top of the engine's API.
+- [x] **Stage 7. Qt GUI** — a thin Qt Widgets layer on top of the engine's
+      API (`gui/`, target `dlm_gui`, off by default — see "Building the Qt
+      GUI" above): add/list downloads, a live per-job progress bar, and
+      pause/resume/cancel, polling `DownloadManager::allJobs()` on a timer.
 - [x] **Stage 8. The "wow" stage** — a token bucket (`RateLimiter`),
       SHA-256 verification, retries with backoff, and a custom HTTP+TLS
       client on raw sockets (`SocketHttpClient`).
 
-All of the above except the Qt GUI is also reachable from the CLI —
-see `download_manager --help`.
+Everything except the Qt GUI is also reachable from the CLI — see
+`download_manager --help`.
 
 ### Decisions made up front
 

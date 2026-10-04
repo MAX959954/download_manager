@@ -314,7 +314,9 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
                                               CancelToken* cancelToken,
                                               std::size_t maxRetries,
                                               const std::string& expectedSha256,
-                                              RateLimiter* rateLimiter) {
+                                              RateLimiter* rateLimiter,
+                                              std::atomic<std::int64_t>* progressBytes,
+                                              std::atomic<std::int64_t>* progressTotalBytes) {
     DownloadResult result;
 
     if (chunkSize <= 0 || numWorkers == 0) {
@@ -379,6 +381,10 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         }
     }
 
+    if (progressTotalBytes) {
+        progressTotalBytes->store(meta.totalSize);
+    }
+
     // Build the list of missing chunks + count the bytes already done.
     std::vector<ChunkSpec> pending;
     std::atomic<std::int64_t> bytesDone{0};
@@ -390,6 +396,9 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
         } else {
             pending.push_back({offset, size});
         }
+    }
+    if (progressBytes) {
+        progressBytes->store(bytesDone.load());
     }
 
     if (pending.empty()) {
@@ -453,6 +462,21 @@ DownloadResult Downloader::downloadResumable(const std::string& url,
                             return false;
                         }
                         writtenInChunk += static_cast<std::int64_t>(n);
+                        // Updated live, as bytes actually land on disk —
+                        // not just once the whole chunk finishes — so a
+                        // caller polling progressBytes (e.g. a GUI) sees
+                        // smooth progress even with few, large chunks
+                        // instead of it jumping only at each chunk
+                        // boundary. A retried chunk can double-count the
+                        // bytes from its failed attempt; that's an
+                        // acceptable, purely cosmetic approximation for a
+                        // progress indicator, not the authoritative byte
+                        // count (bytesDone/the final DownloadResult are
+                        // unaffected — they're only touched below, once
+                        // per chunk, after a chunk fully succeeds).
+                        if (progressBytes) {
+                            progressBytes->fetch_add(static_cast<std::int64_t>(n));
+                        }
                         return true;
                     };
 

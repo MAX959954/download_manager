@@ -34,3 +34,11 @@ option(DLM_BUILD_BENCHMARKS "Build benchmark tools (bench_downloader)" OFF)
 if (DLM_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
+
+# Stage 7: Qt Widgets GUI (dlm_gui). Off by default — Qt is a heavy vcpkg
+# dependency (long first build) that CI and most local builds don't need.
+# See gui/README.md to build it.
+option(DLM_BUILD_GUI "Build the Qt Widgets GUI (dlm_gui)" OFF)
+if (DLM_BUILD_GUI)
+    add_subdirectory(gui)
+endif()
